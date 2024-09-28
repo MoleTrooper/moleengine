@@ -5,6 +5,14 @@ var mip_dst: texture_storage_2d_array<rgba8unorm, write>;
 
 const TILE_SIZE: u32 = 16u;
 
+// Ensure a value isn't exactly zero to slightly mitigate artifacts
+// when attenuation distance is zero.
+// The clamp value is fairly high to make it so the average value never
+// rounds all the way to zero when stored in the texture.
+fn nz(v: f32) -> f32 {
+    return max(v, 0.01);
+}
+
 @compute
 @workgroup_size(TILE_SIZE, TILE_SIZE)
 fn main(
@@ -27,7 +35,7 @@ fn main(
         if layer == 1u {
             // for attenuation, average on the opacity (inverse of attenuation distance)
             // which is a linearly varying property
-            avg.a = 1. / (0.25 / tl.a + 0.25 / tr.a + 0.25 / br.a + 0.25 / bl.a);
+            avg.a = 1. / (0.25 / nz(tl.a) + 0.25 / nz(tr.a) + 0.25 / nz(br.a) + 0.25 / nz(bl.a));
         }
 
         textureStore(mip_dst, dst_texel_id, layer, avg);
