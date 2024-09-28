@@ -3,14 +3,18 @@ use crate::{math as m, Camera};
 use winit::dpi::PhysicalPosition;
 use winit::event as ev;
 
-pub use ev::{ElementState, MouseButton, VirtualKeyCode as Key};
+pub use ev::{ElementState, MouseButton};
+pub use winit::keyboard::KeyCode as Key;
+
+/// This must be at least the number of variants in `Key`
+const KEYCODE_COUNT: usize = 200;
 
 /// Tracks the state of input devices so that they can be queried from one place on demand.
 #[derive(Clone, Debug)]
 pub struct Input {
     // keyboard stored as an array addressed by `Key as usize`.
     // when updating winit, make sure this is as big as the enum!
-    keyboard: [AgedState; 163],
+    keyboard: [AgedState; KEYCODE_COUNT],
     mouse_buttons: MouseButtonState,
     cursor_pos: m::Vec2,
     // previous tick's cursor position to track movements for dragging and such
@@ -22,7 +26,7 @@ impl Input {
     #[inline]
     pub(crate) fn new() -> Self {
         Input {
-            keyboard: [AgedState::default(); 163],
+            keyboard: [AgedState::default(); KEYCODE_COUNT],
             mouse_buttons: Default::default(),
             cursor_pos: m::Vec2::zero(),
             prev_cursor_pos: None,
@@ -38,8 +42,8 @@ impl Input {
     /// against a query.
     ///
     /// ```
-    /// # use starframe::input::{InputCache, ButtonQuery, Key};
-    /// # let input = InputCache::new();
+    /// # use starframe::input::{Input, ButtonQuery, Key};
+    /// # let input = Input::new();
     /// if input.button(
     ///     ButtonQuery::kb(Key::Z).held_min(10)
     /// ) {
@@ -155,8 +159,8 @@ impl Input {
 
     /// Track the effect of a keyboard event.
     #[inline]
-    pub(crate) fn track_keyboard(&mut self, evt: ev::KeyboardInput) {
-        if let Some(code) = evt.virtual_keycode {
+    pub(crate) fn track_keyboard(&mut self, evt: &ev::KeyEvent) {
+        if let winit::keyboard::PhysicalKey::Code(code) = evt.physical_key {
             let cached_key = &mut self.keyboard[code as usize];
             if evt.state != cached_key.state {
                 *cached_key = AgedState::new(evt.state);
@@ -169,7 +173,7 @@ impl Input {
     pub(crate) fn track_window_event(&mut self, event: &ev::WindowEvent) {
         use ev::WindowEvent::*;
         match event {
-            KeyboardInput { input, .. } => self.track_keyboard(*input),
+            KeyboardInput { event, .. } => self.track_keyboard(event),
             MouseInput { button, state, .. } => self.track_mouse_button(*button, *state),
             MouseWheel { delta, .. } => self.track_mouse_wheel(*delta),
             CursorMoved { position, .. } => self.track_cursor_movement(*position),
@@ -421,6 +425,9 @@ impl MouseButtonState {
             MB::Left => Some(&self.left),
             MB::Middle => Some(&self.middle),
             MB::Right => Some(&self.right),
+            // TODO: track back and forward buttons too
+            MB::Forward => None,
+            MB::Back => None,
             MB::Other(_) => None,
         }
     }
@@ -431,6 +438,8 @@ impl MouseButtonState {
             MB::Left => Some(&mut self.left),
             MB::Middle => Some(&mut self.middle),
             MB::Right => Some(&mut self.right),
+            MB::Forward => None,
+            MB::Back => None,
             MB::Other(_) => None,
         }
     }

@@ -93,8 +93,8 @@ pub mod controller {
 
     pub fn tick(game: &mut sf::Game, meshes: &PlayerMeshes) {
         let move_axis = game.input.axis(sf::AxisQuery {
-            pos_btn: sf::Key::Right.into(),
-            neg_btn: sf::Key::Left.into(),
+            pos_btn: sf::Key::ArrowRight.into(),
+            neg_btn: sf::Key::ArrowLeft.into(),
         });
         let (target_facing, target_hdir) = if move_axis == 0.0 {
             (None, 0.0)
@@ -131,7 +131,7 @@ pub mod controller {
 
             // jump
 
-            if game.input.button(sf::Key::LShift.into()) {
+            if game.input.button(sf::Key::ShiftLeft.into()) {
                 // TODO: only on ground, double jump, custom curve
                 body.velocity.linear.y = 4.0;
             }
@@ -155,7 +155,7 @@ pub mod controller {
             // shoot
 
             if state.active_bullets.len() < MAX_SIMULTANEOUS_BULLETS
-                && game.input.button(sf::Key::Z.into())
+                && game.input.button(sf::Key::KeyZ.into())
             {
                 const R: f64 = 0.05;
                 let player_pos = pose.position_2d();

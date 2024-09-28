@@ -9,6 +9,7 @@
 		( shape: ( polygon: Triangle ( outer_r: 0.5 )),
 		    pose: ( position: (0, -1.25), rotation: Deg(180) )),
 	    ],
+	    is_lit: true,
 	),
 	GenericBody(
 	    pose: ( position: (4, 0) ),
@@ -27,6 +28,7 @@
 		( shape: ( polygon: Triangle ( outer_r: 0.5 ), circle_r: 0.25 ),
 		    pose: ( position: (0, 2.1), rotation: Deg(90) )),
 	    ],
+	    is_lit: true,
 	),
 	GenericBody(
 	    pose: ( position: (-4, -2) ),
@@ -37,6 +39,7 @@
 		( shape: ( polygon: Hexagon ( outer_r: 0.5 ), circle_r: 0.5),
 		    pose: ( position: (-1.5, 0) )),
 	    ],
+	    is_lit: true,
 	),
 	GenericBody(
 	    pose: ( position: (-5, 2) ),
@@ -48,6 +51,7 @@
 		( shape: ( polygon: LineSegment ( hl: 1.5 ), circle_r: 0.1 ),
 		    pose: ( position: (-0.87, 0.5), rotation: Deg(60) )),
 	    ],
+	    is_lit: true,
 	),
 	Ball (( radius: 0.5, position: (-5, 2) )),
         // walls
@@ -63,5 +67,6 @@
         Block ((
             width: 0.2, height: 10, pose: ( position: (-10, 0) ), is_static: true,
         )),
+	BackgroundWall(left: -15, top: 10, right: 15, bottom: -10, depth: 1),
     ],
 )

@@ -3,6 +3,7 @@
 static GLOBAL: tracy_client::ProfiledAllocator<std::alloc::System> =
     tracy_client::ProfiledAllocator::new(std::alloc::System, 100);
 
+use itertools::izip;
 use rand::{distributions as distr, distributions::Distribution};
 
 use starframe as sf;
@@ -23,14 +24,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     sf::Game::run(sf::GameParams {
         window,
-        fps: 60,
         on_event: |state: &mut State, evt| {
             if let winit::event::Event::WindowEvent { event, .. } = evt {
-                let egui_resp = state.egui_state.on_window_event(&state.egui_context, event);
+                let egui_resp = state
+                    .egui_state
+                    .on_window_event(sf::Renderer::window(), event);
                 if egui_resp.consumed {
                     // TODO: don't propagate the event
                 }
             }
+        },
+        graphics: sf::GraphicsConfig {
+            fps: 60,
+            use_vsync: std::env::var("NO_VSYNC").is_err(),
+            lighting_quality: sf::LightingQualityConfig::default(),
         },
     })?;
 
@@ -40,6 +47,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 //
 // Types
 //
+
+/// smooth interpolation between environment map presets, just for fun
+#[derive(Clone)]
+enum EnvironmentMapState {
+    Static(sf::EnvironmentMap),
+    Interpolating {
+        start: sf::EnvironmentMap,
+        end: sf::EnvironmentMap,
+        t: f32,
+    },
+}
 
 pub enum StateEnum {
     Playing,
@@ -53,15 +71,13 @@ pub struct State {
     mouse_grabber: MouseGrabber,
     // graphics
     camera: sf::Camera,
-    ambient_light: [f32; 3],
-    dir_light: sf::DirectionalLight,
-    light_rotating: bool,
+    env_map: EnvironmentMapState,
+    light_quality: sf::LightingQualityConfig,
     gen_assets: GeneratedAssets,
     camera_ctl: sf::MouseDragCameraController,
     // egui stuff
-    egui_context: egui::Context,
     egui_state: egui_winit::State,
-    egui_renderer: egui_wgpu::renderer::Renderer,
+    egui_renderer: egui_wgpu::Renderer,
     last_egui_output: egui::FullOutput,
     // UI states
     bvh_vis_active: bool,
@@ -69,6 +85,7 @@ pub struct State {
     island_vis_active: bool,
     spawner_circle_r: f64,
     spawner_obj_count: usize,
+    spawner_is_lit: bool,
     time_scale: f64,
 }
 impl State {
@@ -83,20 +100,23 @@ impl State {
             state: StateEnum::Playing,
             mouse_grabber: MouseGrabber::new(),
             camera: sf::Camera::default(),
-            ambient_light: [0.0686, 0.0875, 0.0918],
-            dir_light: sf::DirectionalLight {
-                color: [0.7, 0.65, 0.4],
-                direction: sf::uv::Vec3::new(-1.0, -3.0, 2.0),
-            },
-            light_rotating: false,
+            // default environment map simulates a soft moonlight
+            // so that dynamic lights inside of the scene look bright
+            env_map: EnvironmentMapState::Static(sf::EnvironmentMap::preset_night()),
+            light_quality: sf::LightingQualityConfig::default(),
             gen_assets,
             camera_ctl: sf::MouseDragCameraController {
                 activate_button: sf::MouseButton::Middle.into(),
-                reset_button: Some(sf::Key::R.into()),
+                reset_button: Some(sf::Key::KeyR.into()),
                 ..Default::default()
             },
-            egui_context,
-            egui_state: egui_winit::State::new(viewport_id, sf::Renderer::window(), None, None),
+            egui_state: egui_winit::State::new(
+                egui_context,
+                viewport_id,
+                sf::Renderer::window(),
+                None,
+                None,
+            ),
             egui_renderer: egui_wgpu::Renderer::new(
                 sf::Renderer::device(),
                 game.renderer.swapchain_format(),
@@ -109,6 +129,7 @@ impl State {
             island_vis_active: false,
             spawner_circle_r: 0.0,
             spawner_obj_count: 1,
+            spawner_is_lit: true,
             time_scale: 1.0,
         }
     }
@@ -126,7 +147,8 @@ const PALETTE_COLORS: [[f32; 4]; 6] = [
 
 pub struct GeneratedAssets {
     player: player::PlayerMeshes,
-    palette: Vec<sf::MaterialId>,
+    light_palette: Vec<sf::MaterialId>,
+    translucent_palette: Vec<sf::MaterialId>,
 }
 
 /// Load assets referenced by name elsewhere.
@@ -141,12 +163,17 @@ fn load_common_assets(game: &mut sf::Game) -> GeneratedAssets {
 
     let player = player::controller::upload_meshes(&mut game.graphics);
 
-    let palette = PALETTE_COLORS
+    let light_palette = PALETTE_COLORS
         .into_iter()
         .map(|col| {
             game.graphics.create_material(
                 sf::MaterialParams {
                     base_color: Some(col),
+                    emissive_color: Some(col),
+                    attenuation: Some(sf::AttenuationParams {
+                        color: [col[0], col[1], col[2]],
+                        distance: 1.,
+                    }),
                     ..Default::default()
                 },
                 None,
@@ -154,7 +181,40 @@ fn load_common_assets(game: &mut sf::Game) -> GeneratedAssets {
         })
         .collect();
 
-    GeneratedAssets { player, palette }
+    let translucent_palette = PALETTE_COLORS
+        .into_iter()
+        .map(|col| {
+            game.graphics.create_material(
+                sf::MaterialParams {
+                    base_color: Some(col),
+                    attenuation: Some(sf::AttenuationParams {
+                        color: [col[0], col[1], col[2]],
+                        distance: 0.05,
+                    }),
+                    ..Default::default()
+                },
+                None,
+            )
+        })
+        .collect();
+
+    game.graphics.create_material(
+        sf::MaterialParams {
+            base_color: Some([0.5, 0.5, 0.5, 1.]),
+            attenuation: Some(sf::AttenuationParams {
+                color: [0.1; 3],
+                distance: 0.5,
+            }),
+            ..Default::default()
+        },
+        Some("wall"),
+    );
+
+    GeneratedAssets {
+        player,
+        light_palette,
+        translucent_palette,
+    }
 }
 
 //
@@ -291,13 +351,25 @@ impl sf::GameState for State {
         //
 
         let egui_input = self.egui_state.take_egui_input(sf::Renderer::window());
-        self.egui_context.begin_frame(egui_input);
+        self.egui_state.egui_ctx().begin_frame(egui_input);
 
         let mut exit = false;
         let mut reload = false;
         let mut step_one = false;
         let mut shape_to_spawn: Option<sf::ColliderPolygon> = None;
-        egui::Window::new("Controls").show(&self.egui_context, |ui| {
+        let mut light_quality = self.light_quality;
+        let current_env_map = match &self.env_map {
+            EnvironmentMapState::Static(m) => m,
+            EnvironmentMapState::Interpolating { end, .. } => end,
+        };
+        let mut next_env_map = current_env_map.clone();
+
+        egui::Window::new("Controls").show(self.egui_state.egui_ctx(), |ui| {
+            let framerate = game.get_framerate();
+            ui.label(format!("{framerate:.1} ms/frame"));
+
+            ui.separator();
+
             ui.heading("Load a scene");
             ui.horizontal_wrapped(|ui| {
                 for scene_path in &self.scenes_available {
@@ -357,38 +429,92 @@ impl sf::GameState for State {
                     }
                 });
             }
+            ui.checkbox(&mut self.spawner_is_lit, "Lit");
 
             ui.separator();
-            ui.heading("Light");
+            ui.heading("Lighting");
+
             ui.horizontal(|ui| {
-                ui.color_edit_button_rgb(&mut self.dir_light.color);
-                ui.label("Direct light color");
-            });
-            ui.horizontal(|ui| {
-                ui.color_edit_button_rgb(&mut self.ambient_light);
-                ui.label("Ambient light color");
-            });
-            ui.horizontal(|ui| {
-                if ui.button("Dim").clicked() {
-                    for channel in &mut self.dir_light.color {
-                        *channel *= 0.5;
-                    }
-                }
-                if ui.button("Brighten").clicked() {
-                    for channel in &mut self.dir_light.color {
-                        *channel *= 2.;
-                    }
-                }
+                ui.radio_value(
+                    &mut light_quality,
+                    sf::LightingQualityConfig::ULTRA,
+                    "Ultra",
+                );
+                ui.radio_value(&mut light_quality, sf::LightingQualityConfig::HIGH, "High");
+                ui.radio_value(
+                    &mut light_quality,
+                    sf::LightingQualityConfig::MEDIUM,
+                    "Medium",
+                );
+                ui.radio_value(&mut light_quality, sf::LightingQualityConfig::LOW, "Low");
+                ui.radio_value(
+                    &mut light_quality,
+                    sf::LightingQualityConfig::LOWEST,
+                    "Lowest",
+                );
             });
             ui.add(
-                egui::Slider::new(&mut self.dir_light.direction.x, -5.0..=5.0).text("Direction x"),
+                egui::Slider::new(&mut light_quality.mip_bias, -1.0..=3.0)
+                    .step_by(0.5)
+                    .text("Mip bias"),
+            );
+
+            ui.horizontal(|ui| {
+                ui.label("Presets");
+                if ui.button("night").clicked() {
+                    next_env_map = sf::EnvironmentMap::preset_night();
+                }
+                if ui.button("sunset").clicked() {
+                    next_env_map = sf::EnvironmentMap::preset_sunset();
+                }
+                if ui.button("day").clicked() {
+                    next_env_map = sf::EnvironmentMap::preset_day();
+                }
+                if ui.button("none").clicked() {
+                    next_env_map = sf::EnvironmentMap {
+                        // add a light with zero so that interpolation still works
+                        lights: vec![sf::DirectionalLight {
+                            color: [0.; 3],
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    };
+                }
+            });
+
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label("Ambient");
+                    ui.color_edit_button_rgb(&mut next_env_map.ambient);
+                });
+                ui.vertical(|ui| {
+                    ui.label("Sun");
+                    ui.color_edit_button_rgb(&mut next_env_map.lights[0].color);
+                });
+                ui.vertical(|ui| {
+                    ui.label("Zenith");
+                    ui.color_edit_button_rgb(&mut next_env_map.zenith);
+                });
+                ui.vertical(|ui| {
+                    ui.label("Horizon");
+                    ui.color_edit_button_rgb(&mut next_env_map.horizon);
+                });
+                ui.vertical(|ui| {
+                    ui.label("Ground");
+                    ui.color_edit_button_rgb(&mut next_env_map.ground);
+                });
+            });
+            ui.add(
+                egui::Slider::new(&mut next_env_map.lights[0].direction.x, -1.0..=1.0)
+                    .text("Sun direction x"),
             );
             ui.add(
-                egui::Slider::new(&mut self.dir_light.direction.y, -5.0..=5.0).text("Direction y"),
+                egui::Slider::new(&mut next_env_map.lights[0].direction.y, -1.0..=1.0)
+                    .text("Sun direction y"),
             );
-            ui.checkbox(&mut self.light_rotating, "Spin");
 
             ui.separator();
+
             ui.heading("Other controls");
             ui.horizontal(|ui| {
                 match self.state {
@@ -445,7 +571,20 @@ impl sf::GameState for State {
             self.scene.instantiate(game, &self.gen_assets);
         }
 
-        self.last_egui_output = self.egui_context.end_frame();
+        if light_quality != self.light_quality {
+            game.renderer.set_lighting_quality(light_quality);
+            self.light_quality = light_quality;
+        }
+
+        if next_env_map != *current_env_map {
+            self.env_map = EnvironmentMapState::Interpolating {
+                start: current_env_map.clone(),
+                end: next_env_map,
+                t: 0.,
+            };
+        }
+
+        self.last_egui_output = self.egui_state.egui_ctx().end_frame();
 
         // mouse controls
 
@@ -478,6 +617,7 @@ impl sf::GameState for State {
                         circle_r: self.spawner_circle_r,
                     }
                     .into()],
+                    is_lit: self.spawner_is_lit,
                 }
                 .spawn(game, &self.gen_assets);
             }
@@ -488,7 +628,7 @@ impl sf::GameState for State {
             // Playing or stepping manually
             //
             (StateEnum::Playing, _) | (StateEnum::Paused, true) => {
-                if game.input.button(sf::Key::P.into()) {
+                if game.input.button(sf::Key::KeyP.into()) {
                     self.state = StateEnum::Paused;
                     return Some(());
                 }
@@ -503,7 +643,7 @@ impl sf::GameState for State {
             // Paused
             //
             (StateEnum::Paused, false) => {
-                if game.input.button(sf::Key::P.into()) {
+                if game.input.button(sf::Key::KeyP.into()) {
                     self.state = StateEnum::Playing;
                     return Some(());
                 }
@@ -526,41 +666,54 @@ impl sf::GameState for State {
             game.graphics.update_animations(dt);
         }
 
-        if self.light_rotating {
-            sf::uv::Rotor3::from_rotation_xy(0.02).rotate_vec(&mut self.dir_light.direction);
+        if let EnvironmentMapState::Interpolating { t, end, .. } = &mut self.env_map {
+            *t += dt;
+            if *t >= 1. {
+                self.env_map = EnvironmentMapState::Static(end.clone());
+            }
         }
+
+        let env_map = match &self.env_map {
+            EnvironmentMapState::Static(m) => m.clone(),
+            EnvironmentMapState::Interpolating { start, end, t } => {
+                fn smoothstep(t: f32) -> f32 {
+                    t * t * (3.0 - 2.0 * t)
+                }
+                let t = smoothstep(*t);
+                let lerp_color = |start: [f32; 3], end: [f32; 3]| -> [f32; 3] {
+                    std::array::from_fn(|i| (1. - t) * start[i] + t * end[i])
+                };
+                sf::EnvironmentMap {
+                    ambient: lerp_color(start.ambient, end.ambient),
+                    horizon: lerp_color(start.horizon, end.horizon),
+                    zenith: lerp_color(start.zenith, end.zenith),
+                    ground: lerp_color(start.ground, end.ground),
+                    lights: izip!(&start.lights, &end.lights)
+                        .map(|(s, e)| sf::DirectionalLight {
+                            color: lerp_color(s.color, e.color),
+                            direction: (1. - t) * s.direction + t * e.direction,
+                        })
+                        .collect(),
+                }
+            }
+        };
+
+        game.renderer.set_environment_map(&env_map);
 
         // scene rendering
 
         let mut frame = game.renderer.begin_frame();
-
         frame.set_clear_color([0.00802, 0.0137, 0.02732, 1.]);
-        frame.set_ambient_light(self.ambient_light);
-        // main sunlight
-        frame.push_directional_light(self.dir_light);
-        // fill light based on the ambient color
-        frame.push_directional_light(sf::DirectionalLight {
-            color: self.ambient_light.map(|channel| channel * 0.5),
-            direction: sf::Vec3::new(
-                -self.dir_light.direction.x,
-                -self.dir_light.direction.y,
-                self.dir_light.direction.z,
-            ),
-        });
-        frame.extend_point_lights(sf::PointLight::gather_from_world(&mut game.world));
         frame.draw_meshes(&mut game.graphics, &mut game.world, &self.camera);
-
-        // forward pass
 
         // egui
 
-        let paint_jobs = self.egui_context.tessellate(
+        let paint_jobs = self.egui_state.egui_ctx().tessellate(
             self.last_egui_output.shapes.clone(),
-            self.egui_context.pixels_per_point(),
+            self.egui_state.egui_ctx().pixels_per_point(),
         );
         self.egui_state.handle_platform_output(
             sf::Renderer::window(),
-            &self.egui_context,
             self.last_egui_output.platform_output.clone(),
         );
 
@@ -573,9 +726,9 @@ impl sf::GameState for State {
             self.egui_renderer.free_texture(tex_id);
         }
 
-        let screen_desc = egui_wgpu::renderer::ScreenDescriptor {
+        let screen_desc = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [window_size.width, window_size.height],
-            pixels_per_point: self.egui_context.pixels_per_point(),
+            pixels_per_point: self.egui_state.egui_ctx().pixels_per_point(),
         };
         self.egui_renderer.update_buffers(
             device,

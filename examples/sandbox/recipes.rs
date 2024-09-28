@@ -19,6 +19,7 @@ pub enum Recipe {
         #[serde(with = "sf::serde_pose")]
         pose: sf::Pose,
         colliders: Vec<sf::Collider>,
+        is_lit: bool,
     },
     Blockchain {
         width: f64,
@@ -43,6 +44,13 @@ pub enum Recipe {
         #[serde(with = "sf::serde_pose")]
         pose: sf::Pose,
         start_time: f32,
+    },
+    BackgroundWall {
+        left: f32,
+        top: f32,
+        right: f32,
+        bottom: f32,
+        depth: f32,
     },
     BackgroundForest {
         mesh_count: usize,
@@ -128,6 +136,8 @@ fn spawn_block(game: &mut sf::Game, block: Block) -> sf::hecs::Entity {
         data: sf::MeshData::from(coll),
         ..Default::default()
     });
+    let mat = game.graphics.get_material_id("wall").unwrap();
+    game.graphics.set_mesh_material(mesh_id, mat);
 
     let entity = game.world.spawn((pose, coll_key, mesh_id));
 
@@ -223,9 +233,14 @@ fn spawn_body(game: &mut sf::Game, solid: Solid) -> sf::BodyKey {
 impl Recipe {
     pub fn spawn(&self, game: &mut sf::Game, gen_assets: &super::GeneratedAssets) {
         let mut rng = rand::thread_rng();
-        let mut random_palette = || {
+        let mut random_palette = |is_lit: bool| {
             let idx = rng.gen_range(0..super::PALETTE_COLORS.len());
-            (super::PALETTE_COLORS[idx], gen_assets.palette[idx])
+            let mat = if is_lit {
+                gen_assets.light_palette[idx]
+            } else {
+                gen_assets.translucent_palette[idx]
+            };
+            (super::PALETTE_COLORS[idx], mat)
         };
         match self {
             Recipe::Player(p_rec) => p_rec.spawn(game, gen_assets.player),
@@ -245,7 +260,7 @@ impl Recipe {
                         restitution_coef: *restitution,
                         ..Default::default()
                     });
-                let (col, mat) = random_palette();
+                let (col, mat) = random_palette(false);
                 let solid = Solid {
                     pose,
                     colliders: &mut [coll],
@@ -266,7 +281,7 @@ impl Recipe {
                 pose,
                 is_static,
             }) => {
-                let (col, mat) = random_palette();
+                let (col, mat) = random_palette(false);
                 let solid = Solid {
                     pose: (*pose).into(),
                     colliders: &mut [sf::Collider::new_capsule(*length, *radius)],
@@ -279,8 +294,12 @@ impl Recipe {
                     spawn_body(game, solid);
                 }
             }
-            Recipe::GenericBody { pose, colliders } => {
-                let (col, mat) = random_palette();
+            Recipe::GenericBody {
+                pose,
+                colliders,
+                is_lit,
+            } => {
+                let (col, mat) = random_palette(*is_lit);
                 let solid = Solid {
                     pose: *pose,
                     colliders,
@@ -315,7 +334,7 @@ impl Recipe {
                     let orientation = (distance[0] / dist_norm).acos() * distance[1].signum();
 
                     let caps_full_length = dist_norm - spacing;
-                    let (col, mat) = random_palette();
+                    let (col, mat) = random_palette(false);
                     let capsule = spawn_body(
                         game,
                         Solid {
@@ -434,6 +453,8 @@ impl Recipe {
                     }),
                     ..Default::default()
                 });
+                let rope_mat = game.graphics.get_material_id("wall").unwrap();
+                game.graphics.set_mesh_material(mesh_id, rope_mat);
                 for particle in &rope.particles {
                     let mesh_ent = game.world.spawn((sf::Pose::default(), mesh_id, *particle));
                     game.hecs_sync.register_body(
@@ -479,6 +500,29 @@ impl Recipe {
                     }
                 }
                 game.physics.rope_set.insert(rope);
+            }
+            Recipe::BackgroundWall {
+                left,
+                top,
+                right,
+                bottom,
+                depth,
+            } => {
+                let mesh_id = game.graphics.create_mesh(sf::MeshParams {
+                    // TODO: ConvexMeshShape should take f32s
+                    data: sf::MeshData::from(sf::ConvexMeshShape::Rect {
+                        w: (right - left) as f64,
+                        h: (top - bottom) as f64,
+                    }),
+                    ..Default::default()
+                });
+
+                let pose = sf::PoseBuilder::new()
+                    .with_position([(right + left) / 2., (top + bottom) / 2.])
+                    .with_depth(*depth)
+                    .build();
+
+                game.world.spawn((mesh_id, pose));
             }
             Recipe::BackgroundTree { pose, start_time } => {
                 let mesh_id = game.graphics.get_mesh_id("library.tree_mesh").unwrap();

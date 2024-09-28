@@ -10,6 +10,8 @@ pub use renderer::Renderer;
 pub(crate) mod light;
 pub use light::{DirectionalLight, PointLight};
 
+pub(crate) mod gi;
+
 pub mod util;
 
 pub mod camera;

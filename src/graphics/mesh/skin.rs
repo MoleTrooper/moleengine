@@ -205,6 +205,7 @@ impl SkinPipeline {
             module: &shader,
             entry_point: "main",
             layout: Some(&pl_layout),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
         });
 
         Self {

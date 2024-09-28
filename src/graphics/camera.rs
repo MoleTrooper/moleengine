@@ -115,7 +115,7 @@ impl Camera {
     }
 
     /// Viewport pixels per world unit, taking into consideration zoom level.
-    fn pixels_per_world_unit(&self, viewport_size: (u32, u32)) -> f32 {
+    pub(crate) fn pixels_per_world_unit(&self, viewport_size: (u32, u32)) -> f32 {
         let (vp_w, vp_h) = viewport_size;
         (vp_w as f32 / self.view_width).min(vp_h as f32 / self.view_height) * self.zoom
     }

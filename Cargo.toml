@@ -5,9 +5,9 @@ authors = ["Mikael Myyrä <mikael.myyrae@gmail.com>"]
 edition = "2021"
 
 [dependencies]
-winit = "0.28.7"
+winit = "0.29"
 instant = { version = "0.1", features = ["wasm-bindgen"] }
-wgpu = "0.18.0"
+wgpu = "0.20.1"
 hecs = "0.10.3"
 thunderdome = "0.6.1"
 zerocopy = "0.6.1"
@@ -15,11 +15,12 @@ futures = "0.3.19"
 ultraviolet = { version = "0.9.0", features = ["f64"] }
 itertools = "0.10.3"
 parking_lot = "0.11.2"
-tracy-client = { version = "0.15.2", default-features = false }
 serde = { version = "1.0.132", features = ["derive"], optional = true }
 rayon = { version = "1.5.1", optional = true }
 gltf = { version = "1.4.0", optional = true }
 thiserror = "1.0.58"
+tracy-client = { version = "=0.17.0", default-features = false }
+wgpu-profiler = { version = "0.17.0", features = ["tracy"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2.80"
@@ -36,16 +37,16 @@ console_log = "0.1.2"
 default = ["serde-types", "gltf"]
 parallel = ["rayon"]
 serde-types = ["serde", "ultraviolet/serde", "winit/serde"]
-tracy = ["tracy-client/enable"]
+tracy = ["tracy-client/enable", "tracy-client/ondemand"]
 
 [dev-dependencies]
 rand = "0.8.4"
 getrandom = { version = "0.2.7", features = ["js"] }
 ron = "0.7.0"
 # egui and its wgpu integration deps
-egui = "0.24.1"
-egui-wgpu = "0.24.1"
-egui-winit = "0.24.1"
+egui = "0.28.1"
+egui-wgpu = "0.28.1"
+egui-winit = "0.28.1"
 
 [[example]]
 name = "sandbox"

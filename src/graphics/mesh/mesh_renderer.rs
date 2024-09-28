@@ -1,6 +1,6 @@
 use crate::{
     graphics::{
-        light::LightManager,
+        gi::{GlobalIlluminationPipeline, LIGHT_TEX_FMT},
         manager::MeshId,
         material::Material,
         renderer::{DEFAULT_MULTISAMPLE_STATE, DEPTH_FORMAT, SWAPCHAIN_FORMAT},
@@ -14,7 +14,11 @@ use std::mem::size_of;
 use zerocopy::{AsBytes, FromBytes};
 
 pub struct MeshRenderer {
+    // depth prepass to prevent overdraw
     depth_pipeline: wgpu::RenderPipeline,
+    // light pass drawing light emitters and occluders to a different target
+    emissive_pipeline: wgpu::RenderPipeline,
+    // pipeline actually drawing the meshes
     main_pipeline: wgpu::RenderPipeline,
     instance_unif_buf: wgpu::Buffer,
     instance_unif_bind_group_layout: wgpu::BindGroupLayout,
@@ -34,11 +38,11 @@ struct InstanceUniforms {
 }
 
 impl MeshRenderer {
-    pub(crate) fn new(light_man: &LightManager) -> Self {
+    pub(crate) fn new(gi_pl: &GlobalIlluminationPipeline) -> Self {
         let device = crate::Renderer::device();
 
         let depth_shader =
-            device.create_shader_module(wgpu::include_wgsl!("../shaders/depth_prepass.wgsl"));
+            device.create_shader_module(wgpu::include_wgsl!("../shaders/depth_and_emissive.wgsl"));
         let main_shader = device.create_shader_module(wgpu::include_wgsl!("../shaders/mesh.wgsl"));
 
         // instance uniforms bind group
@@ -108,7 +112,7 @@ impl MeshRenderer {
         };
 
         //
-        // pipeline
+        // pipelines
         //
 
         let depth_pl_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -127,11 +131,13 @@ impl MeshRenderer {
                 module: &depth_shader,
                 entry_point: "vs_main",
                 buffers: &[vertex_buffers.clone()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &depth_shader,
-                entry_point: "fs_main",
+                entry_point: "fs_depth",
                 targets: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
@@ -145,7 +151,7 @@ impl MeshRenderer {
                 depth_compare: wgpu::CompareFunction::Less,
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState {
-                    constant: 1,
+                    constant: 2,
                     ..Default::default()
                 },
             }),
@@ -153,11 +159,39 @@ impl MeshRenderer {
             multiview: None,
         });
 
+        let emissive_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("emissive"),
+            layout: Some(&depth_pl_layout),
+            vertex: wgpu::VertexState {
+                module: &depth_shader,
+                entry_point: "vs_main",
+                buffers: &[vertex_buffers.clone()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &depth_shader,
+                entry_point: "fs_emissive",
+                targets: &[Some(LIGHT_TEX_FMT.into()), Some(LIGHT_TEX_FMT.into())],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                ..Default::default()
+            },
+            // when drawing lights we draw to a different, lower-res render target
+            // without depth testing or multisampling
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+        });
+
         let main_pl_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mesh"),
             bind_group_layouts: &[
                 crate::Camera::bind_group_layout(),
-                &light_man.bind_group_layout,
+                &gi_pl.bind_group_layouts.render,
                 Material::bind_group_layout(),
                 &instance_unif_bind_group_layout,
             ],
@@ -170,6 +204,7 @@ impl MeshRenderer {
                 module: &main_shader,
                 entry_point: "vs_main",
                 buffers: &[vertex_buffers],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &main_shader,
@@ -179,6 +214,7 @@ impl MeshRenderer {
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::COLOR,
                 })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
@@ -199,6 +235,7 @@ impl MeshRenderer {
 
         Self {
             depth_pipeline,
+            emissive_pipeline,
             main_pipeline,
             instance_unif_buf,
             instance_unif_bind_group_layout,
@@ -293,7 +330,22 @@ impl MeshRenderer {
         pass.set_bind_group(0, &camera.bind_group, &[]);
 
         for (idx, (mesh_id, _)) in self.meshes_sorted.iter().enumerate() {
-            self.draw_mesh(pass, manager, idx, mesh_id, false);
+            self.draw_mesh(pass, manager, idx, mesh_id, PassId::Depth);
+        }
+    }
+
+    /// Draw meshes with emissive / occlusive materials to the light texture
+    /// for global illumination (see gi.rs)
+    pub(crate) fn emissive_pass<'pass>(
+        &'pass self,
+        pass: &mut wgpu::RenderPass<'pass>,
+        manager: &'pass mut GraphicsManager,
+        camera: &'pass Camera,
+    ) {
+        pass.set_pipeline(&self.emissive_pipeline);
+        pass.set_bind_group(0, &camera.bind_group, &[]);
+        for (idx, (mesh_id, _)) in self.meshes_sorted.iter().enumerate() {
+            self.draw_mesh(pass, manager, idx, mesh_id, PassId::Emissive);
         }
     }
 
@@ -302,16 +354,16 @@ impl MeshRenderer {
         pass: &mut wgpu::RenderPass<'pass>,
         manager: &'pass mut GraphicsManager,
         camera: &'pass Camera,
-        light_man: &'pass LightManager,
+        gi_pl: &'pass GlobalIlluminationPipeline,
     ) {
         // full render in reverse z order for transparency
 
         pass.set_pipeline(&self.main_pipeline);
         pass.set_bind_group(0, &camera.bind_group, &[]);
-        pass.set_bind_group(1, &light_man.bind_group, &[]);
+        pass.set_bind_group(1, &gi_pl.bind_groups.render, &[]);
 
         for (idx, (mesh_id, _)) in self.meshes_sorted.iter().enumerate().rev() {
-            self.draw_mesh(pass, manager, idx, mesh_id, true);
+            self.draw_mesh(pass, manager, idx, mesh_id, PassId::Main);
         }
     }
 
@@ -321,15 +373,21 @@ impl MeshRenderer {
         manager: &'pass GraphicsManager,
         idx: usize,
         mesh_id: &MeshId,
-        lights_bound: bool,
+        pass_id: PassId,
     ) {
         let Some(mesh) = manager.get_mesh(mesh_id) else {
             return;
         };
 
-        let bg_offset = if lights_bound { 1 } else { 0 };
-
         let material = manager.get_mesh_material(mesh_id);
+        if matches!(pass_id, PassId::Emissive) && !material.participates_in_lighting {
+            return;
+        }
+
+        let bg_offset = match pass_id {
+            PassId::Main => 1,
+            _ => 0,
+        };
         pass.set_bind_group(1 + bg_offset, &material.bind_group, &[]);
         pass.set_bind_group(
             2 + bg_offset,
@@ -350,4 +408,11 @@ impl MeshRenderer {
 
         pass.draw_indexed(0..mesh.gpu_data.idx_count, 0, 0..1);
     }
+}
+
+#[derive(Clone, Copy)]
+enum PassId {
+    Depth,
+    Emissive,
+    Main,
 }

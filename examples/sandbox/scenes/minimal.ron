@@ -23,5 +23,6 @@
         BackgroundTree (
             pose: ( position: (-7, -2), depth: 5.0 ), start_time: 4,
         ),
+	BackgroundWall(left: -15, top: 10, right: 15, bottom: -10, depth: 10),
     ]
 )

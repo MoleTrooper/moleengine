@@ -1,5 +1,5 @@
 pub mod game;
-pub use game::{Game, GameParams, GameState};
+pub use game::{Game, GameParams, GameState, GraphicsConfig};
 
 pub mod input;
 pub use input::{AxisQuery, Button, ButtonQuery, Input, Key, MouseButton};
@@ -12,10 +12,14 @@ pub use math::{uv, Angle, DVec2, PhysicsPose, Pose, PoseBuilder, Rotor2, Rotor3,
 pub mod graphics;
 pub use graphics::{
     camera::{Camera, MouseDragCameraController},
-    material::{Material, MaterialParams, Texture, TextureData},
+    gi::{
+        environment_map::{DirectionalLight, EnvironmentMap},
+        LightingQualityConfig,
+    },
+    material::{AttenuationParams, Material, MaterialParams, Texture, TextureData},
     mesh::{ConvexMeshShape, Mesh, MeshData, MeshParams, Skin},
-    AnimationId, Animator, DirectionalLight, GraphicsManager, LineStrip, LineVertex, MaterialId,
-    MeshId, MeshVertex, PointLight, Renderer,
+    AnimationId, Animator, GraphicsManager, LineStrip, LineVertex, MaterialId, MeshId, MeshVertex,
+    PointLight, Renderer,
 };
 
 pub mod physics;

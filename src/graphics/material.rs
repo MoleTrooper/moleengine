@@ -100,14 +100,47 @@ impl MaterialResources {
     }
 }
 
+/// Creation parameters for a material.
 #[derive(Debug, Clone, Default)]
 pub struct MaterialParams<'a> {
+    /// A constant diffuse color.
+    ///
+    /// If this and `diffuse_tex` are both set,
+    /// the texture values are multiplied by this value.
     pub base_color: Option<[f32; 4]>,
+    /// Amount of light emitted by the material per unit of distance.
+    pub emissive_color: Option<[f32; 4]>,
+    /// Parameters for how the material absorbs light.
+    pub attenuation: Option<AttenuationParams>,
+    /// Texture data for the diffuse color.
     pub diffuse_tex: Option<TextureData<'a>>,
+    /// Texture data for the normal map.
     pub normal_tex: Option<TextureData<'a>>,
 }
 
+/// Parameters controlling how a material absorbs light.
+#[derive(Clone, Copy, Debug)]
+pub struct AttenuationParams {
+    /// Color that white light will become
+    /// after moving through a `distance`-sized unit of the material.
+    pub color: [f32; 3],
+    /// Distance within the material that it takes
+    /// for white light to turn into `self.color`.
+    pub distance: f32,
+}
+
+impl Default for AttenuationParams {
+    fn default() -> Self {
+        Self {
+            color: [1.; 3],
+            distance: 1.,
+        }
+    }
+}
+
+/// A material determines the color and lighting properties of a mesh.
 pub struct Material {
+    pub(crate) participates_in_lighting: bool,
     pub(crate) bind_group: wgpu::BindGroup,
     // textures and buffer stored to avoid dropping them
     _uniform_buf: wgpu::Buffer,
@@ -130,6 +163,9 @@ impl Material {
             label: Some("material uniforms"),
             contents: MaterialUniforms {
                 base_color: params.base_color.unwrap_or([1.; 4]),
+                emissive_color: params.emissive_color.unwrap_or([0.; 4]),
+                attenuation_color: params.attenuation.unwrap_or_default().color,
+                attenuation_distance: params.attenuation.unwrap_or_default().distance,
             }
             .as_bytes(),
             usage: wgpu::BufferUsages::UNIFORM,
@@ -163,6 +199,8 @@ impl Material {
         });
 
         Self {
+            participates_in_lighting: params.emissive_color.is_some()
+                || params.attenuation.is_some(),
             bind_group,
             _uniform_buf: uniform_buf,
             _diffuse_tex: diffuse_tex,
@@ -174,6 +212,8 @@ impl Material {
         DEFAULT_MATERIAL.get_or_init(|| {
             Self::new(MaterialParams {
                 base_color: Some([1.; 4]),
+                emissive_color: None,
+                attenuation: None,
                 diffuse_tex: None,
                 normal_tex: None,
             })
@@ -190,6 +230,9 @@ impl Material {
 #[derive(Clone, Copy, Debug, AsBytes, FromBytes)]
 struct MaterialUniforms {
     base_color: [f32; 4],
+    emissive_color: [f32; 4],
+    attenuation_color: [f32; 3],
+    attenuation_distance: f32,
 }
 
 #[derive(Debug)]
@@ -230,6 +273,7 @@ impl<'a> TextureData<'a> {
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             },
+            wgpu::util::TextureDataOrder::LayerMajor,
             self.pixels,
         );
 
@@ -241,8 +285,7 @@ impl<'a> TextureData<'a> {
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
 

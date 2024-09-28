@@ -1,9 +1,11 @@
 use super::{
-    light,
+    gi, light,
     line_renderer::LineRenderer,
     mesh::{skin::SkinPipeline, MeshRenderer},
 };
 use std::sync::OnceLock;
+
+use wgpu_profiler as wp;
 
 // there is only ever one wgpu context,
 // and since the device and queue are frequently needed to create resources,
@@ -30,29 +32,34 @@ pub const DEFAULT_MULTISAMPLE_STATE: wgpu::MultisampleState = wgpu::MultisampleS
 
 /// A Renderer manages resources needed to draw graphics to the screen.
 pub struct Renderer {
-    surface: wgpu::Surface,
+    surface: wgpu::Surface<'static>,
     surface_config: wgpu::SurfaceConfiguration,
     window_scale_factor: f64,
 
     msaa_view: wgpu::TextureView,
+    // textures and bind group for depth and lights to use in GI
     depth_tex: wgpu::Texture,
     depth_view: wgpu::TextureView,
-    // bind group for reading the depth texture in a shader
-    depth_bind_group: wgpu::BindGroup,
+    emissive_tex: wgpu::Texture,
+    emissive_view: wgpu::TextureView,
 
     light_man: light::LightManager,
-
+    gi_pipeline: gi::GlobalIlluminationPipeline,
     mesh_renderer: MeshRenderer,
     skin_pl: SkinPipeline,
     // rendering subsystems that aren't always used in lazily initialized Options
     // so we can have a unified API to call them through `Frame`
     // but don't pay for them if the user doesn't use them
     line_renderer: Option<LineRenderer>,
+
+    pub(crate) profiler: wp::GpuProfiler,
 }
 
 /// An error that occurred during renderer initialization.
 #[derive(thiserror::Error, Debug)]
 pub enum RendererInitError {
+    #[error("Failed to get a window handle")]
+    HandleError,
     #[error("Failed to create surface")]
     CreateSurfaceError(#[from] wgpu::CreateSurfaceError),
     #[error("Adapter request failed")]
@@ -61,14 +68,24 @@ pub enum RendererInitError {
     RequestDeviceError(#[from] wgpu::RequestDeviceError),
     #[error("Another Renderer already existed")]
     AlreadyInitialized,
+    #[error("Failed to create a profiler")]
+    ProfilerError(#[from] wp::CreationError),
 }
 
 impl Renderer {
     /// Create a Renderer.
     /// The [`Game`][crate::game::Game] API does this automatically.
-    pub(crate) async fn init(window: winit::window::Window) -> Result<Self, RendererInitError> {
+    pub(crate) async fn init(
+        window: winit::window::Window,
+        config: crate::GraphicsConfig,
+    ) -> Result<Self, RendererInitError> {
         let instance = wgpu::Instance::default();
-        let surface = unsafe { instance.create_surface(&window) }?;
+        let surface = unsafe {
+            instance.create_surface_unsafe(
+                wgpu::SurfaceTargetUnsafe::from_window(&window)
+                    .map_err(|_| RendererInitError::HandleError)?,
+            )?
+        };
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -79,11 +96,16 @@ impl Renderer {
             .await
             .ok_or(RendererInitError::RequestAdapterError)?;
 
+        #[cfg(feature = "tracy")]
+        let profiling_features = wp::GpuProfiler::ALL_WGPU_TIMER_FEATURES;
+        #[cfg(not(feature = "tracy"))]
+        let profiling_features = wgpu::Features::empty();
+
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
-                    features: wgpu::Features::empty(),
-                    limits: wgpu::Limits {
+                    required_features: wgpu::Features::default() | profiling_features,
+                    required_limits: wgpu::Limits {
                         min_uniform_buffer_offset_alignment: 64,
                         ..Default::default()
                     },
@@ -102,13 +124,34 @@ impl Renderer {
             format: SWAPCHAIN_FORMAT,
             width: window_size.width,
             height: window_size.height,
-            present_mode: wgpu::PresentMode::AutoVsync,
+            present_mode: if config.use_vsync {
+                wgpu::PresentMode::AutoVsync
+            } else {
+                wgpu::PresentMode::AutoNoVsync
+            },
             alpha_mode: swapchain_capabilities.alpha_modes[0],
             view_formats: vec![],
+            desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &surface_config);
 
         let window_scale_factor = window.scale_factor();
+
+        #[cfg(feature = "tracy")]
+        let profiler = wp::GpuProfiler::new_with_tracy_client(
+            wp::GpuProfilerSettings::default(),
+            adapter.get_info().backend,
+            &device,
+            &queue,
+        )?;
+        // if tracy is not enabled, create a no-op profiler anyway
+        // so that we don't need to feature-gate all profiler usages
+        #[cfg(not(feature = "tracy"))]
+        let profiler = wp::GpuProfiler::new(wp::GpuProfilerSettings {
+            enable_timer_queries: false,
+            enable_debug_groups: false,
+            ..Default::default()
+        })?;
 
         DEVICE
             .set(device)
@@ -125,10 +168,12 @@ impl Renderer {
 
         let depth_tex = Self::create_depth_texture(window_size);
         let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
-        let depth_bind_group = Self::create_depth_bind_group(&depth_view);
+        let emissive_tex = Self::create_emissive_texture(window_size);
+        let emissive_view = emissive_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
+        let gi_pipeline = gi::GlobalIlluminationPipeline::new(config.lighting_quality);
         let light_man = light::LightManager::new();
-        let mesh_renderer = MeshRenderer::new(&light_man);
+        let mesh_renderer = MeshRenderer::new(&gi_pipeline);
         let skin_pl = SkinPipeline::new();
 
         Ok(Renderer {
@@ -138,11 +183,14 @@ impl Renderer {
             msaa_view,
             depth_tex,
             depth_view,
-            depth_bind_group,
+            emissive_tex,
+            emissive_view,
+            gi_pipeline,
             light_man,
             mesh_renderer,
             skin_pl,
             line_renderer: None,
+            profiler,
         })
     }
 
@@ -188,7 +236,11 @@ impl Renderer {
         self.depth_view = self
             .depth_tex
             .create_view(&wgpu::TextureViewDescriptor::default());
-        self.depth_bind_group = Self::create_depth_bind_group(&self.depth_view);
+        self.emissive_tex = Self::create_emissive_texture(new_size);
+        self.emissive_view = self
+            .emissive_tex
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        self.gi_pipeline.resize(new_size);
         self.light_man.recreate_light_bins(new_size.into());
     }
 
@@ -228,35 +280,58 @@ impl Renderer {
         })
     }
 
+    fn create_emissive_texture(size: winit::dpi::PhysicalSize<u32>) -> wgpu::Texture {
+        let device = Self::device();
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("emissive"),
+            size: wgpu::Extent3d {
+                width: size.width,
+                height: size.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        })
+    }
+
     pub(crate) fn depth_bind_group_layout<'a>() -> &'a wgpu::BindGroupLayout {
         DEPTH_BIND_GROUP_LAYOUT.get_or_init(|| {
             let device = Self::device();
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("depth"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: true,
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Depth,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: true,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                        count: None,
+                    },
+                ],
             })
-        })
-    }
-
-    fn create_depth_bind_group(view: &wgpu::TextureView) -> wgpu::BindGroup {
-        let device = Self::device();
-        let layout = Self::depth_bind_group_layout();
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("depth"),
-            layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(view),
-            }],
         })
     }
 
@@ -295,6 +370,18 @@ impl Renderer {
         }
     }
 
+    /// Change lighting quality parameters at runtime.
+    #[inline]
+    pub fn set_lighting_quality(&mut self, conf: gi::LightingQualityConfig) {
+        self.gi_pipeline.set_quality(conf);
+    }
+
+    /// Set the environment map for lighting.
+    #[inline]
+    pub fn set_environment_map(&mut self, params: &crate::EnvironmentMap) {
+        self.gi_pipeline.env_map.bake(params);
+    }
+
     /// Start drawing a frame.
     #[inline]
     pub fn begin_frame(&mut self) -> Frame<'_> {
@@ -314,7 +401,7 @@ impl Renderer {
             renderer: self,
             encoder: Some(encoder),
             surface: Some(surface),
-            view,
+            target_view: view,
             clear_color: Some(wgpu::Color::BLACK),
             ambient_color: [0.; 3],
             dir_lights: Vec::new(),
@@ -329,7 +416,7 @@ pub struct Frame<'a> {
     // so that we can take them out on drop without using unsafe
     encoder: Option<wgpu::CommandEncoder>,
     surface: Option<wgpu::SurfaceTexture>,
-    view: wgpu::TextureView,
+    target_view: wgpu::TextureView,
     clear_color: Option<wgpu::Color>,
     // lighting state
     ambient_color: [f32; 3],
@@ -339,8 +426,7 @@ pub struct Frame<'a> {
 
 impl<'a> Frame<'a> {
     /// Set the color the framebuffer will be cleared with
-    /// when the shading is executed (i.e. on [`finish`][Self::finish]).
-    /// Black by default.
+    /// when the shading is executed. Black by default.
     pub fn set_clear_color(&mut self, color: [f32; 4]) {
         self.clear_color = Some(wgpu::Color {
             r: color[0] as f64,
@@ -350,41 +436,6 @@ impl<'a> Frame<'a> {
         });
     }
 
-    /// Set the ambient light color of the scene.
-    /// This is light that is applied everywhere regardless of surface direction.
-    #[inline]
-    pub fn set_ambient_light(&mut self, light_color: [f32; 3]) {
-        self.ambient_color = light_color;
-    }
-
-    /// Add a directional light.
-    #[inline]
-    pub fn push_directional_light(&mut self, light: crate::DirectionalLight) {
-        self.dir_lights.push(light);
-    }
-
-    /// Add directional lights from an iterator.
-    #[inline]
-    pub fn extend_directional_lights(
-        &mut self,
-        lights: impl Iterator<Item = crate::DirectionalLight>,
-    ) {
-        self.dir_lights.extend(lights);
-    }
-
-    /// Add a point light.
-    #[inline]
-    pub fn push_point_light(&mut self, light: crate::PointLight) {
-        self.point_lights.push(light::GpuPointLight::from(light));
-    }
-
-    /// Add point lights from an iterator.
-    #[inline]
-    pub fn extend_point_lights(&mut self, lights: impl Iterator<Item = crate::PointLight>) {
-        self.point_lights
-            .extend(lights.map(light::GpuPointLight::from));
-    }
-
     /// Draw all meshes in the world.
     pub fn draw_meshes(
         &mut self,
@@ -392,6 +443,10 @@ impl<'a> Frame<'a> {
         world: &mut hecs::World,
         camera: &crate::Camera,
     ) {
+        let device = Renderer::device();
+        let encoder = self.encoder.as_mut().unwrap();
+        let mut scope = self.renderer.profiler.scope("draw meshes", encoder, device);
+
         // upload lights
 
         let main_lights = light::MainLights {
@@ -404,12 +459,8 @@ impl<'a> Frame<'a> {
 
         // compute skins
 
-        let encoder = self.encoder.as_mut().unwrap();
         {
-            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: None,
-                timestamp_writes: None,
-            });
+            let mut cpass = scope.scoped_compute_pass("compute skins", device);
             self.renderer.skin_pl.compute_skins(&mut cpass, manager);
         }
 
@@ -420,52 +471,103 @@ impl<'a> Frame<'a> {
         // render depth
 
         {
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: None,
-                color_attachments: &[],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.renderer.depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.),
-                        store: wgpu::StoreOp::Store,
+            let mut rpass = scope.scoped_render_pass(
+                "render depth",
+                device,
+                wgpu::RenderPassDescriptor {
+                    label: None,
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.renderer.depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
                     }),
-                    stencil_ops: None,
-                }),
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                },
+            );
 
             let mesh_rend = &mut self.renderer.mesh_renderer;
             mesh_rend.depth_pass(&mut rpass, manager, camera);
         }
 
-        // compute light culling
+        // render light emitters and occluders
 
         {
-            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: None,
-                timestamp_writes: None,
-            });
-            self.renderer.light_man.cull_lights(
-                &mut cpass,
-                camera,
-                &self.renderer.depth_bind_group,
+            let mut rpass = scope.scoped_render_pass(
+                "render lights",
+                device,
+                wgpu::RenderPassDescriptor {
+                    label: Some("lights"),
+                    color_attachments: &[
+                        Some(wgpu::RenderPassColorAttachment {
+                            view: &self.renderer.gi_pipeline.textures.light_emission,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        }),
+                        Some(wgpu::RenderPassColorAttachment {
+                            view: &self.renderer.gi_pipeline.textures.light_attenuation,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                // clear with a color that corresponds to a fully transparent material
+                                load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        }),
+                    ],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                },
             );
+
+            let mesh_rend = &mut self.renderer.mesh_renderer;
+            mesh_rend.emissive_pass(&mut rpass, manager, camera);
         }
+
+        // compute global illumination
+
+        {
+            let mut cpass = scope.scoped_compute_pass("compute light mips", device);
+            self.renderer.gi_pipeline.compute_light_mips(&mut cpass);
+        }
+
+        self.renderer.gi_pipeline.compute_gi(&mut scope, camera);
 
         // final render
 
         {
-            let mut rpass = Self::_pass(
-                encoder,
-                &self.renderer.msaa_view,
-                &self.view,
-                Some(&self.renderer.depth_view),
-                self.clear_color.take(),
+            let mut rpass = scope.scoped_render_pass(
+                "render meshes",
+                device,
+                wgpu::RenderPassDescriptor {
+                    label: None,
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &self.renderer.msaa_view,
+                        resolve_target: Some(&self.target_view),
+                        ops: Self::ops(self.clear_color.take()),
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.renderer.depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                },
             );
 
             let mesh_rend = &mut self.renderer.mesh_renderer;
-            mesh_rend.draw_pass(&mut rpass, manager, camera, &self.renderer.light_man);
+            mesh_rend.draw_pass(&mut rpass, manager, camera, &self.renderer.gi_pipeline);
         }
     }
 
@@ -476,70 +578,69 @@ impl<'a> Frame<'a> {
         camera: &crate::Camera,
         lines: impl IntoIterator<Item = &'s super::line_renderer::LineStrip>,
     ) {
+        let device = Renderer::device();
+        let encoder = self.encoder.as_mut().unwrap();
+        let mut scope = self.renderer.profiler.scope("draw lines", encoder, device);
+
         let line_rend = self
             .renderer
             .line_renderer
             .get_or_insert_with(LineRenderer::new);
 
-        let mut pass = Self::_pass(
-            self.encoder.as_mut().unwrap(),
-            &self.renderer.msaa_view,
-            &self.view,
-            Some(&self.renderer.depth_view),
-            self.clear_color.take(),
-        );
+        let mut pass = scope.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("lines"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &self.renderer.msaa_view,
+                resolve_target: Some(&self.target_view),
+                ops: Self::ops(self.clear_color.take()),
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &self.renderer.depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
         for line in lines {
             line_rend.draw(&mut pass, manager, camera, line);
         }
     }
 
-    /// Begin a render pass with default parameters.
+    /// Begin a render pass with default parameters that draws to the screen.
     pub fn pass(&mut self) -> wgpu::RenderPass<'_> {
-        Self::_pass(
-            self.encoder.as_mut().unwrap(),
-            &self.renderer.msaa_view,
-            &self.view,
-            Some(&self.renderer.depth_view),
-            self.clear_color.take(),
-        )
-    }
-
-    // these arguments need to be partially borrowed from a &mut Self
-    // to avoid lifetime trouble
-    fn _pass<'enc, 'view: 'enc>(
-        encoder: &'enc mut wgpu::CommandEncoder,
-        msaa_view: &'view wgpu::TextureView,
-        target_view: &'view wgpu::TextureView,
-        depth_view: Option<&'view wgpu::TextureView>,
-        clear_color: Option<wgpu::Color>,
-    ) -> wgpu::RenderPass<'enc> {
+        let encoder = self.encoder.as_mut().unwrap();
         encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: None,
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: msaa_view,
-                resolve_target: Some(target_view),
-                ops: wgpu::Operations {
-                    load: if let Some(color) = clear_color {
-                        wgpu::LoadOp::Clear(color)
-                    } else {
-                        wgpu::LoadOp::Load
-                    },
-                    store: wgpu::StoreOp::Store,
-                },
+                view: &self.renderer.msaa_view,
+                resolve_target: Some(&self.target_view),
+                ops: Self::ops(self.clear_color.take()),
             })],
-            depth_stencil_attachment: depth_view.map(|depth_view| {
-                wgpu::RenderPassDepthStencilAttachment {
-                    view: depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &self.renderer.depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
             }),
             occlusion_query_set: None,
             timestamp_writes: None,
         })
+    }
+
+    fn ops(clear_color: Option<wgpu::Color>) -> wgpu::Operations<wgpu::Color> {
+        wgpu::Operations {
+            load: match clear_color {
+                Some(color) => wgpu::LoadOp::Clear(color),
+                None => wgpu::LoadOp::Load,
+            },
+            store: wgpu::StoreOp::Store,
+        }
     }
 
     /// Access the command encoder recording commands for this frame.
@@ -552,7 +653,9 @@ impl<'a> Frame<'a> {
 impl<'a> Drop for Frame<'a> {
     fn drop(&mut self) {
         let queue = Renderer::queue();
-        queue.submit(Some(self.encoder.take().unwrap().finish()));
+        let mut encoder = self.encoder.take().unwrap();
+        self.renderer.profiler.resolve_queries(&mut encoder);
+        queue.submit(Some(encoder.finish()));
         self.surface.take().unwrap().present();
     }
 }

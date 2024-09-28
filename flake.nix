@@ -1,6 +1,7 @@
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/release-24.05";
+    nixpkgs-23-11.url = "github:NixOS/nixpkgs/release-23.11";
     flake-utils.url = "github:numtide/flake-utils";
     rust-overlay.url = "github:oxalica/rust-overlay";
     wgsl-analyzer.url = "github:wgsl-analyzer/wgsl-analyzer";
@@ -15,6 +16,8 @@
           overlays = [ (import inputs.rust-overlay) ];
         };
 
+        pkgs-23-11 = import inputs.nixpkgs-23-11 { inherit system; };
+
         rust = pkgs.rust-bin.stable.latest.default.override {
           extensions = [ "rust-src" ];
         };
@@ -26,26 +29,27 @@
           pkgs.mkShell
             {
               buildInputs = [
-                pkgs.niv
-                # rust and profiling
+                # rust and profiling/debugging
                 rust
                 wgsl-analyzer
                 pkgs.cargo-flamegraph
                 pkgs.lld
                 pkgs.llvmPackages.bintools
-                pkgs.tracy
-                # other utils
-                pkgs.just
+                # older tracy because it's currently broken on 24.05
+                pkgs-23-11.tracy
                 pkgs.renderdoc
                 # wgpu C dependencies
                 pkgs.pkg-config
                 pkgs.xorg.libX11
+                # misc
+                pkgs.just
               ];
               # make C libraries available
               LD_LIBRARY_PATH = with pkgs.xorg; with pkgs.lib.strings;
                 concatStrings (intersperse ":" [
                   "${libX11}/lib"
                   "${libXcursor}/lib"
+                  "${pkgs.libxkbcommon}/lib"
                   "${libXxf86vm}/lib"
                   "${libXi}/lib"
                   "${libXrandr}/lib"

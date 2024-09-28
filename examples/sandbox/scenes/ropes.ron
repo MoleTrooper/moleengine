@@ -50,6 +50,9 @@
             offset1: (3.1, 0),
             block2: ( width: 6, height: 0.2, pose: ( position: (10, -3.5), rotation: Deg(30) ), is_static: true ),
             offset2: (-3.1, 0),
-        )
+        ),
+	BackgroundWall(left: -15, top: 20, right: 15, bottom: -10, depth: 10),
+	BackgroundWall(left: -50, top: 20, right: -20, bottom: -10, depth: 10),
+	BackgroundWall(left: 20, top: 20, right: 50, bottom: -10, depth: 10),
     ],
 )

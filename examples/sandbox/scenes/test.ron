@@ -63,5 +63,6 @@
         Block ((
             width: 0.2, height: 10, pose: ( position: (-10, 0) ), is_static: true,
         )),
+	BackgroundWall(left: -15, top: 10, right: 15, bottom: -10, depth: 1),
     ]
 )
