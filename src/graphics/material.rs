@@ -126,6 +126,10 @@ pub struct AttenuationParams {
     pub color: [f32; 3],
     /// Distance within the material that it takes
     /// for white light to turn into `self.color`.
+    ///
+    /// Due to limitations in the GPU representation of this information,
+    /// this value is limited to the range 0..=1.
+    /// This has not been found to be particularly limiting in practice.
     pub distance: f32,
 }
 
