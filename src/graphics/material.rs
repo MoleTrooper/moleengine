@@ -103,6 +103,9 @@ impl MaterialResources {
 /// Creation parameters for a material.
 #[derive(Debug, Clone, Default)]
 pub struct MaterialParams<'a> {
+    /// An optional name, used to look the material up
+    /// with [`GraphicsManager::get_material_id`][`super::GraphicsManager::get_material_id`].
+    pub name: Option<&'a str>,
     /// A constant diffuse color.
     ///
     /// If this and `diffuse_tex` are both set,
@@ -215,6 +218,7 @@ impl Material {
     pub(super) fn get_default<'a>() -> &'a Self {
         DEFAULT_MATERIAL.get_or_init(|| {
             Self::new(MaterialParams {
+                name: None,
                 base_color: Some([1.; 4]),
                 emissive_color: None,
                 attenuation: None,

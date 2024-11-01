@@ -108,6 +108,7 @@ pub fn load_material<'doc>(
     });
 
     MaterialParams {
+        name: material.name(),
         base_color,
         emissive_color,
         // TODO: figure out where to put attenuation properties of the material.

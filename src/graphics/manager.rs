@@ -413,11 +413,8 @@ impl GraphicsManager {
     ///
     /// To associate the material with a mesh, see [`set_mesh_material`][Self::set_mesh_material].
     #[inline]
-    pub fn create_material(
-        &mut self,
-        params: MaterialParams<'_>,
-        name: Option<&str>,
-    ) -> MaterialId {
+    pub fn create_material(&mut self, params: MaterialParams<'_>) -> MaterialId {
+        let name = params.name;
         let mat = Material::new(params);
         let id = self.materials.insert(mat);
         if let Some(name) = name {

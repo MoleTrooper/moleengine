@@ -166,49 +166,41 @@ fn load_common_assets(game: &mut sf::Game) -> GeneratedAssets {
     let light_palette = PALETTE_COLORS
         .into_iter()
         .map(|col| {
-            game.graphics.create_material(
-                sf::MaterialParams {
-                    base_color: Some(col),
-                    emissive_color: Some(col),
-                    attenuation: Some(sf::AttenuationParams {
-                        color: [col[0], col[1], col[2]],
-                        distance: 1.,
-                    }),
-                    ..Default::default()
-                },
-                None,
-            )
+            game.graphics.create_material(sf::MaterialParams {
+                base_color: Some(col),
+                emissive_color: Some(col),
+                attenuation: Some(sf::AttenuationParams {
+                    color: [col[0], col[1], col[2]],
+                    distance: 1.,
+                }),
+                ..Default::default()
+            })
         })
         .collect();
 
     let translucent_palette = PALETTE_COLORS
         .into_iter()
         .map(|col| {
-            game.graphics.create_material(
-                sf::MaterialParams {
-                    base_color: Some(col),
-                    attenuation: Some(sf::AttenuationParams {
-                        color: [col[0], col[1], col[2]],
-                        distance: 0.05,
-                    }),
-                    ..Default::default()
-                },
-                None,
-            )
+            game.graphics.create_material(sf::MaterialParams {
+                base_color: Some(col),
+                attenuation: Some(sf::AttenuationParams {
+                    color: [col[0], col[1], col[2]],
+                    distance: 0.05,
+                }),
+                ..Default::default()
+            })
         })
         .collect();
 
-    game.graphics.create_material(
-        sf::MaterialParams {
-            base_color: Some([0.5, 0.5, 0.5, 1.]),
-            attenuation: Some(sf::AttenuationParams {
-                color: [0.1; 3],
-                distance: 0.5,
-            }),
-            ..Default::default()
-        },
-        Some("wall"),
-    );
+    game.graphics.create_material(sf::MaterialParams {
+        name: Some("wall"),
+        base_color: Some([0.5, 0.5, 0.5, 1.]),
+        attenuation: Some(sf::AttenuationParams {
+            color: [0.1; 3],
+            distance: 0.5,
+        }),
+        ..Default::default()
+    });
 
     GeneratedAssets {
         player,
