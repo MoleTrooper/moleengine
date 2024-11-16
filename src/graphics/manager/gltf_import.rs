@@ -3,7 +3,7 @@
 use crate::{
     graphics::{
         animation::gltf_animation as g_anim,
-        material::{MaterialParams, TextureData},
+        material::{AttenuationParams, MaterialParams, TextureData},
         mesh::skin,
         mesh::{self, MeshData},
     },
@@ -107,14 +107,18 @@ pub fn load_material<'doc>(
         }
     });
 
+    // attenuation parameters from the gltf volume extension
+
+    let attenuation = material.volume().map(|vol| AttenuationParams {
+        color: vol.attenuation_color(),
+        distance: vol.attenuation_distance(),
+    });
+
     MaterialParams {
         name: material.name(),
         base_color,
         emissive_color,
-        // TODO: figure out where to put attenuation properties of the material.
-        // the gltf volume extension is cool
-        // but I need this to be a texture which it doesn't have
-        attenuation: None,
+        attenuation,
         diffuse_tex,
         normal_tex,
     }
