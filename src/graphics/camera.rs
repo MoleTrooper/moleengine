@@ -193,6 +193,26 @@ impl Camera {
         m::Vec2::new(vec_screen.x, -vec_screen.y) / ppwu
     }
 
+    /// Transform a point from world space to screen space,
+    /// returning None if the point is off-screen.
+    pub fn point_world_to_screen(&self, point_world: m::Vec2) -> Option<m::Vec2> {
+        let window = crate::Renderer::window();
+        let viewport_size = window.inner_size().into();
+
+        let ppwu = self.pixels_per_world_unit(viewport_size);
+        let half_vp_diag = m::Vec2::new(viewport_size.0 as f32 / 2., viewport_size.1 as f32 / 2.);
+
+        let point_screen = ppwu * (self.pose_as_2d().inversed() * point_world) + half_vp_diag;
+        if point_screen.x < 0.
+            || point_screen.y < 0.
+            || point_screen.x > viewport_size.0 as f32
+            || point_screen.y > viewport_size.1 as f32
+        {
+            return None;
+        }
+        Some(point_screen)
+    }
+
     fn pose_as_2d(&self) -> uv::Isometry2 {
         uv::Isometry2::new(
             uv::Vec2::new(self.pose.translation.x, self.pose.translation.y),
