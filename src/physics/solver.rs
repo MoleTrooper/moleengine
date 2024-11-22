@@ -285,14 +285,9 @@ fn solve_contacts(data: &mut DataView<'_>, entity_set: &EntitySet) {
             get_collider_body(data.global_body_order, data.island_offset, *c, entity_set)
         });
 
-        if !bodies[0]
-            .map(|bi| data.bodies[bi].sees_forces())
-            .unwrap_or(false)
-            && !bodies[1]
-                .map(|bi| data.bodies[bi].sees_forces())
-                .unwrap_or(false)
-        {
-            // both bodies are kinematic or static, skip this pair
+        if bodies[0].is_none() && bodies[1].is_none() {
+            // both colliders are static, skip this pair.
+            // for kinematic bodies we still report contacts but skip physics
             *contact = ContactResult::Zero;
             continue;
         }
@@ -322,6 +317,17 @@ fn solve_contacts(data: &mut DataView<'_>, entity_set: &EntitySet) {
         // this will be available to be queried by the user later
         if !matches!(contact, ContactResult::Zero) {
             *last_contact = *contact;
+        }
+
+        // if both bodies are static or kinematic, stop here
+        if !bodies[0]
+            .map(|bi| data.bodies[bi].sees_forces())
+            .unwrap_or(false)
+            && !bodies[1]
+                .map(|bi| data.bodies[bi].sees_forces())
+                .unwrap_or(false)
+        {
+            continue;
         }
 
         // if one of the bodies is from a rope, adjust normal
@@ -506,6 +512,17 @@ fn contact_velocity_step(data: &mut DataView<'_>, entity_set: &EntitySet) {
         let bodies: [Option<usize>; 2] = map_pair(coll_keys, |c| {
             get_collider_body(data.global_body_order, data.island_offset, *c, entity_set)
         });
+
+        // check if the contact is between two kinematic/static bodies, skip if so
+        if !bodies[0]
+            .map(|bi| data.bodies[bi].sees_forces())
+            .unwrap_or(false)
+            && !bodies[1]
+                .map(|bi| data.bodies[bi].sees_forces())
+                .unwrap_or(false)
+        {
+            continue;
+        }
 
         for contact in contact.iter() {
             struct WorkingVars {
