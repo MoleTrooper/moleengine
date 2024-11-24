@@ -60,7 +60,7 @@ pub fn solve(forcefield: &impl ForceField, data: &mut DataView<'_>, entity_set: 
         &mut *data.old_velocities,
         &mut *data.ext_f_accelerations
     ) {
-        if let Mass::Finite { .. } = body.mass {
+        if !body.ignores_gravity && matches!(body.mass, Mass::Finite { .. }) {
             // TODO: rename forcefield to accelerationfield or allow it to depend on mass
             let ff_accel = forcefield.value_at(body.pose.translation);
             body.velocity.linear += ff_accel * data.dt;

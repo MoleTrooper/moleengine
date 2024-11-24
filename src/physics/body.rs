@@ -9,6 +9,7 @@ pub struct Body {
     pub velocity: Velocity,
     pub mass: Mass,
     pub moment_of_inertia: Mass,
+    pub ignores_gravity: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -25,6 +26,7 @@ impl Body {
             velocity: Velocity::default(),
             mass: Mass::from(mass),
             moment_of_inertia: Mass::Infinite,
+            ignores_gravity: false,
         }
     }
 
@@ -38,6 +40,7 @@ impl Body {
             velocity: Velocity::default(),
             mass: Mass::from(mass),
             moment_of_inertia: Mass::from(coll_info.second_moment_of_area * density),
+            ignores_gravity: false,
         }
     }
 
@@ -50,6 +53,7 @@ impl Body {
             velocity: Velocity::default(),
             mass: Mass::from(mass),
             moment_of_inertia: Mass::from(coll_info.second_moment_of_area * density),
+            ignores_gravity: false,
         }
     }
 
@@ -60,6 +64,7 @@ impl Body {
             velocity: Velocity::default(),
             mass: Mass::Infinite,
             moment_of_inertia: Mass::Infinite,
+            ignores_gravity: false,
         }
     }
 
@@ -72,6 +77,12 @@ impl Body {
     /// Set the velocity of the body in a builder-like chain.
     pub fn with_velocity(mut self, vel: Velocity) -> Self {
         self.velocity = vel;
+        self
+    }
+
+    /// Stop this body from being accelerated by gravity.
+    pub fn ignore_gravity(mut self) -> Self {
+        self.ignores_gravity = true;
         self
     }
 
