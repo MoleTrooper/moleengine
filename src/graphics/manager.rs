@@ -142,7 +142,14 @@ impl GraphicsManager {
         }
     }
 
-    /// Load all graphics assets (meshes, skins, materials, animations) in a glTF document.
+    /// Load all graphics assets (meshes, skins, materials, animations) in a glTF document
+    /// stored in a given file location.
+    ///
+    /// To load a document directly from bytes (e.g. included with `include_bytes!`),
+    /// use [`load_gltf_bytes`][Self::load_gltf_bytes].
+    /// The disadvantage of using that method
+    /// is that it cannot recursively load referenced documents
+    /// (feature WIP, not actually implemented yet).
     ///
     /// # Naming scheme
     ///
@@ -174,11 +181,23 @@ impl GraphicsManager {
             .file_stem()
             .and_then(|stem| stem.to_str())
             .ok_or(LoadError::InvalidFileName)?;
+
+        self.load_gltf_bytes(file_stem, &file_bytes)?;
+        Ok(())
+    }
+
+    /// Load graphics from a glTF document which has already been read into your program.
+    ///
+    /// The given `prefix` parameter is prepended
+    /// to the names of all resources loaded from the document.
+    /// See the "naming scheme" section of [`load_gltf`][Self::load_gltf] for details.
+    #[cfg(feature = "gltf")]
+    pub fn load_gltf_bytes(&mut self, prefix: &str, data: &[u8]) -> Result<(), gltf::Error> {
         // asset ids are names of the gltf node prefixed with file name
         // (the assumption being that names are unique, as is enforced by Blender)
-        let name_to_id = |name: &str| format!("{file_stem}.{name}");
+        let name_to_id = |name: &str| format!("{prefix}.{name}");
 
-        let (doc, bufs, images) = gltf::import_slice(file_bytes)?;
+        let (doc, bufs, images) = gltf::import_slice(data)?;
         let bufs: Vec<&[u8]> = bufs.iter().map(|data| data.0.as_slice()).collect();
 
         // node transforms in world space, evaluated from the scene graph
