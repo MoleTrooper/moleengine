@@ -221,7 +221,7 @@ fn raymarch(ray: Ray) -> RayResult {
             mfp > 0.,
         );
         let step_rad = 0.5 * step_world * (prev_rad * step_transp + next_rad);
-        out.radiance += step_rad * out.transparency;
+        out.radiance += step_rad * out.transparency / approx_attn.a;
         out.transparency = out.transparency * step_transp;
 
         prev_rad = next_rad;

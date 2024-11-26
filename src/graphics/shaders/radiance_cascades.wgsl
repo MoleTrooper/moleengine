@@ -208,7 +208,18 @@ fn raymarch(ray: Ray) -> RayResult {
             approx_attn.a > 0.,
         );
         let step_rad = 0.5 * step_world * (prev_rad * step_transp + next_rad);
-        out.radiance += step_rad * out.transparency;
+        // scale the radiance by attenuation distance
+        // to make opaque light emitters work better
+        // (without this it's impossible for them to be bright).
+        // this is a somewhat hacky solution
+        // that seems to cause heavy ringing with near-opaque things;
+        // I believe ideal would be to scale the input radiance beforehand instead
+        // but that would need to approach infinity in the full opacity limit
+        // which requires float textures.
+        // TODO: solve this in a mathematically sound way (/check how sound this actually is).
+        // the idea should be that exactly `emissive_color` amount of radiance
+        // is emitted by the time full absorption happens
+        out.radiance += step_rad * out.transparency / approx_attn.a;
         out.transparency = out.transparency * step_transp;
 
         prev_rad = next_rad;
