@@ -170,8 +170,8 @@ fn load_common_assets(game: &mut sf::Game) -> GeneratedAssets {
                 base_color: Some(col),
                 emissive_color: Some(col),
                 attenuation: Some(sf::AttenuationParams {
-                    color: [col[0], col[1], col[2]],
-                    distance: 1.,
+                    color: [0.5, 0.5, 0.5],
+                    distance: 0.1,
                 }),
                 ..Default::default()
             })
