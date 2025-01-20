@@ -5,39 +5,51 @@
 In disc golf, a starframe occurs when every player in a group scores a birdie
 on the same hole.
 
-This starframe, however, is a 2D game engine written in Rust as a solo hobby
-project. Its main feature is the physics engine, with design driven by
-sidescrolling action games. It is currently being developed alongside
-[Flamegrower](https://github.com/MoleTrooper/flamegrower), a platformer
-about vines and fire.
+This starframe, however, is my personal game engine written in Rust.
+Its main feature is the physics engine,
+with design driven by sidescrolling action games.
 
-## Current features
+Stuff made with it:
+- [animated artworks][art]
+- [Velgi] — Fangame of Velgress from UFO 50
+- [Flamegrower] — Puzzle platformer about vines and fire (WIP, progressing very slowly)
 
-![Current state of graphics and physics](demo.gif)
+## Screenshots
+
+![A stack of boxes and some colored balls, lit by a setting sun from the side.
+The stack of boxes blocks the sunlight, leaving a blue shadow.](screenshots/sunset.jpg)
+
+![Various shapes scattered on the ground, some of them emitting light
+and others casting colored shadows.
+There are a few trees in the background.](screenshots/night.jpg)
+
+![Various shapes suspended on top of a rope,
+casting colored shadows underneath them.](screenshots/day.jpg)
+
+## Features
+
+Most links in the following are to blog posts discussing the feature.
 
 - 2D rigid body and particle physics
-  - high-fidelity solver based on [Extended Position-Based Dynamics][xpbd]
-    - [related blog post](https://molentum.me/blog/starframe-constraints/)
-  - collider shapes: circles, convex polygons, and rounded convex polygons
+  - [solver][blog-consraints] based on [Extended Position-Based Dynamics][xpbd]
+  - [collider shapes][blog-colliders]: circles, convex polygons, and rounded convex polygons
     - compound shapes of many of these also supported
-  - raycasts and spherecasts
-  - particle-based ropes with full coupling with rigid bodies
-- graphics using [wgpu]
-  - colored 2D triangle meshes
-  - support for skinning and animation (WIP)
+  - [raycasts and spherecasts][blog-colliders]
+  - [particle-based ropes][blog-ropes] with full coupling with rigid bodies
+- [graphics] using [wgpu]
+  - global illumination with Radiance Cascades
+  - textured and animated triangle meshes, optionally with normal maps
 
 ## Who this is for
 
-At least for now, this is intended just for my personal use.
-There are a lot of rough edges, missing features,
-and even more missing documentation. 
-It's very far from something you can make an entire game with at the moment. 
-That said, the physics is perfectly usable already,
-at least for the things I'm doing with it
-(though not always very easy to use).
-If you want some really detailed 2D physics simulation
-and are adventurous enough to deal with a lot of incomplete bits,
-there might be some fun to be had here.
+The more I work on graphics, the more it becomes clear
+that this is an _extremely_ opinionated engine
+for my personal style of making games and graphics.
+I don't have the time or interest to support use cases other than mine.
+So this is a thing for personal use first and foremost.
+If you want to try making something with my very specific graphics workflow,
+or just use the physics part and ignore the rest, be my guest.
+I can't promise it will work out well.
 
 ## Blog
 
@@ -48,14 +60,6 @@ I write about this project once in a blue moon on [my website](https://molentum.
 I have a little sandbox I use for testing new features where you can throw
 blocks around with the mouse and move a rudimentary platformer character that
 shoots some rather heavy bullets. Here's how you can check it out:
-
-### In the browser
-
-If you have access to a WebGPU-enabled browser (Firefox Nightly or Chrome Canary
-with the right flag set), you can try out [this online build of the sandbox](https://molentum.me/sandbox/)!
-Due to the instability of the feature in current browsers it may or may not work,
-and it might not be the latest version here on git, but it's there and it's cool.
-Thanks [wgpu]!
 
 ### The manual way
 
@@ -90,3 +94,11 @@ Z       - shoot
 
 [xpbd]: https://matthias-research.github.io/pages/publications/PBDBodies.pdf
 [wgpu]: https://github.com/gfx-rs/wgpu-rs
+[blog-constraints]: https://molentum.me/blog/2021/starframe-constraints/
+[blog-ropes]: https://molentum.me/blog/2021/starframe-ropes/
+[blog-colliders]: https://molentum.me/blog/2025/rounding-collider-corners/
+[blog-graphics]: https://molentum.me/blog/2025/game-graphics/
+[flamegrower]: https://github.com/m0lentum/flamegrower
+[art]: https://github.com/m0lentum/art
+[flamegrower]: https://github.com/m0lentum/flamegrower
+[velgi]: https://molentum.itch.io/velgi
