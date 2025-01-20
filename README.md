@@ -31,12 +31,12 @@ casting colored shadows underneath them.](screenshots/day.jpg)
 Most links in the following are to blog posts discussing the feature.
 
 - 2D rigid body and particle physics
-  - [solver][blog-consraints] based on [Extended Position-Based Dynamics][xpbd]
+  - [solver][blog-constraints] based on [Extended Position-Based Dynamics][xpbd]
   - [collider shapes][blog-colliders]: circles, convex polygons, and rounded convex polygons
     - compound shapes of many of these also supported
   - [raycasts and spherecasts][blog-colliders]
   - [particle-based ropes][blog-ropes] with full coupling with rigid bodies
-- [graphics] using [wgpu]
+- [graphics][blog-graphics] using [wgpu]
   - global illumination with Radiance Cascades
   - textured and animated triangle meshes, optionally with normal maps
 
