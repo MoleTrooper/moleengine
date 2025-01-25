@@ -1,5 +1,5 @@
 use super::{
-    gi, light,
+    gi,
     line_renderer::LineRenderer,
     mesh::{skin::SkinPipeline, MeshRenderer},
 };
@@ -43,7 +43,6 @@ pub struct Renderer {
     emissive_tex: wgpu::Texture,
     emissive_view: wgpu::TextureView,
 
-    light_man: light::LightManager,
     gi_pipeline: gi::GlobalIlluminationPipeline,
     mesh_renderer: MeshRenderer,
     skin_pl: SkinPipeline,
@@ -172,7 +171,6 @@ impl Renderer {
         let emissive_view = emissive_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
         let gi_pipeline = gi::GlobalIlluminationPipeline::new(config.lighting_quality);
-        let light_man = light::LightManager::new();
         let mesh_renderer = MeshRenderer::new(&gi_pipeline);
         let skin_pl = SkinPipeline::new();
 
@@ -186,7 +184,6 @@ impl Renderer {
             emissive_tex,
             emissive_view,
             gi_pipeline,
-            light_man,
             mesh_renderer,
             skin_pl,
             line_renderer: None,
@@ -241,7 +238,6 @@ impl Renderer {
             .emissive_tex
             .create_view(&wgpu::TextureViewDescriptor::default());
         self.gi_pipeline.resize(new_size);
-        self.light_man.recreate_light_bins(new_size.into());
     }
 
     fn create_msaa_texture(size: winit::dpi::PhysicalSize<u32>) -> wgpu::Texture {
@@ -403,9 +399,6 @@ impl Renderer {
             surface: Some(surface),
             target_view: view,
             clear_color: Some(wgpu::Color::BLACK),
-            ambient_color: [0.; 3],
-            dir_lights: Vec::new(),
-            point_lights: Vec::new(),
         }
     }
 }
@@ -418,10 +411,6 @@ pub struct Frame<'a> {
     surface: Option<wgpu::SurfaceTexture>,
     target_view: wgpu::TextureView,
     clear_color: Option<wgpu::Color>,
-    // lighting state
-    ambient_color: [f32; 3],
-    dir_lights: Vec<light::DirectionalLight>,
-    point_lights: Vec<light::GpuPointLight>,
 }
 
 impl<'a> Frame<'a> {
@@ -446,16 +435,6 @@ impl<'a> Frame<'a> {
         let device = Renderer::device();
         let encoder = self.encoder.as_mut().unwrap();
         let mut scope = self.renderer.profiler.scope("draw meshes", encoder, device);
-
-        // upload lights
-
-        let main_lights = light::MainLights {
-            ambient_color: self.ambient_color,
-            dir_lights: std::mem::take(&mut self.dir_lights),
-        };
-        let point_lights = std::mem::take(&mut self.point_lights);
-        self.renderer.light_man.write_main_lights(main_lights);
-        self.renderer.light_man.write_point_lights(point_lights);
 
         // compute skins
 

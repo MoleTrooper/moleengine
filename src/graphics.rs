@@ -7,9 +7,6 @@ pub use manager::{AnimationId, GraphicsManager, MaterialId, MeshId};
 pub mod renderer;
 pub use renderer::Renderer;
 
-pub(crate) mod light;
-pub use light::{DirectionalLight, PointLight};
-
 pub(crate) mod gi;
 
 pub mod util;

@@ -19,7 +19,7 @@ pub use graphics::{
     material::{AttenuationParams, Material, MaterialParams, Texture, TextureData},
     mesh::{ConvexMeshShape, Mesh, MeshData, MeshParams, Skin},
     AnimationId, Animator, GraphicsManager, LineStrip, LineVertex, MaterialId, MeshId, MeshVertex,
-    PointLight, Renderer,
+    Renderer,
 };
 
 pub mod physics;
