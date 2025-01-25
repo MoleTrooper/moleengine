@@ -4,6 +4,9 @@ pub use animation::animator::Animator;
 mod manager;
 pub use manager::{AnimationId, GraphicsManager, MaterialId, MeshId};
 
+mod scene;
+pub use scene::Scene;
+
 pub mod renderer;
 pub use renderer::Renderer;
 

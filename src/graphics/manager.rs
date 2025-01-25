@@ -5,9 +5,10 @@ use super::{
     animation::{animator::Animator, gltf_animation::GltfAnimation},
     material::{Material, MaterialParams},
     mesh::{Mesh, MeshParams},
+    scene::{Node, Scene},
     Skin,
 };
-use crate::math::uv;
+use crate::math::{self as m, uv};
 
 #[cfg(feature = "gltf")]
 mod gltf_import;
@@ -118,6 +119,8 @@ pub enum LoadError {
     IoError(#[from] std::io::Error),
     #[error("Failed to read glTF document")]
     GltfError(#[from] gltf::Error),
+    #[error("Document doesn't have a scene in it")]
+    NoScene,
 }
 
 impl GraphicsManager {
@@ -173,7 +176,7 @@ impl GraphicsManager {
     /// - animations can only target one skin at a time
     ///   and cannot target nodes that aren't part of a skin
     #[cfg(feature = "gltf")]
-    pub fn load_gltf(&mut self, path: impl AsRef<std::path::Path>) -> Result<(), LoadError> {
+    pub fn load_gltf(&mut self, path: impl AsRef<std::path::Path>) -> Result<Scene, LoadError> {
         let path = path.as_ref();
         let file_bytes = std::fs::read(path)?;
 
@@ -182,8 +185,7 @@ impl GraphicsManager {
             .and_then(|stem| stem.to_str())
             .ok_or(LoadError::InvalidFileName)?;
 
-        self.load_gltf_bytes(file_stem, &file_bytes)?;
-        Ok(())
+        self.load_gltf_bytes(file_stem, &file_bytes)
     }
 
     /// Load graphics from a glTF document which has already been read into your program.
@@ -192,7 +194,7 @@ impl GraphicsManager {
     /// to the names of all resources loaded from the document.
     /// See the "naming scheme" section of [`load_gltf`][Self::load_gltf] for details.
     #[cfg(feature = "gltf")]
-    pub fn load_gltf_bytes(&mut self, prefix: &str, data: &[u8]) -> Result<(), gltf::Error> {
+    pub fn load_gltf_bytes(&mut self, prefix: &str, data: &[u8]) -> Result<Scene, LoadError> {
         // asset ids are names of the gltf node prefixed with file name
         // (the assumption being that names are unique, as is enforced by Blender)
         let name_to_id = |name: &str| format!("{prefix}.{name}");
@@ -200,8 +202,12 @@ impl GraphicsManager {
         let (doc, bufs, images) = gltf::import_slice(data)?;
         let bufs: Vec<&[u8]> = bufs.iter().map(|data| data.0.as_slice()).collect();
 
-        // node transforms in world space, evaluated from the scene graph
-        let mut node_transforms_world = vec![uv::Mat4::identity(); doc.nodes().count()];
+        // collect the global poses of nodes by traversing the hierarchy;
+        // these will be used to produce a scene description at the end.
+        // in glTF nodes can have nonuniform scaling,
+        // but we don't support that here, except in animations,
+        // which are loaded separately from this hierarchy
+        let mut node_poses: Vec<m::Pose> = vec![m::Pose::default(); doc.nodes().count()];
         // meshes are associated with skins in the node hierarchy,
         // they don't have a direct link in the mesh/skin structures themselves.
         // we only support meshes with a single skin stored in the same glTF file,
@@ -210,38 +216,42 @@ impl GraphicsManager {
         // which we'll convert to asset ids later
         let mut mesh_skin_idx_map: HashMap<usize, usize> = HashMap::new();
         // recursive traversal of the scene graph to get node data
-        for scene in doc.scenes() {
-            for node in scene.nodes() {
-                struct TraversalContext<'a> {
-                    node_transforms_world: &'a mut [uv::Mat4],
-                    mesh_skin_idx_map: &'a mut HashMap<usize, usize>,
-                }
-                fn traverse_node(
-                    ctx: &mut TraversalContext<'_>,
-                    node: gltf::Node<'_>,
-                    parent_transform: uv::Mat4,
-                ) {
-                    let node_transform =
-                        parent_transform * uv::Mat4::from(node.transform().matrix());
-
-                    ctx.node_transforms_world[node.index()] = node_transform;
-                    if let (Some(mesh), Some(skin)) = (node.mesh(), node.skin()) {
-                        ctx.mesh_skin_idx_map.insert(mesh.index(), skin.index());
-                    }
-
-                    for child in node.children() {
-                        traverse_node(ctx, child, node_transform);
-                    }
-                }
-                traverse_node(
-                    &mut TraversalContext {
-                        node_transforms_world: &mut node_transforms_world,
-                        mesh_skin_idx_map: &mut mesh_skin_idx_map,
-                    },
-                    node,
-                    uv::Mat4::identity(),
-                );
+        let scene = doc.scenes().next().ok_or(LoadError::NoScene)?;
+        for node in scene.nodes() {
+            struct TraversalContext<'a> {
+                node_poses: &'a mut [m::Pose],
+                mesh_skin_idx_map: &'a mut HashMap<usize, usize>,
             }
+            fn traverse_node(
+                ctx: &mut TraversalContext<'_>,
+                node: gltf::Node<'_>,
+                parent_pose: m::Pose,
+            ) {
+                let (pos, rot_q, scale) = node.transform().decomposed();
+                let node_pose = parent_pose
+                    * m::Pose(uv::Similarity3::new(
+                        m::Vec3::from(pos),
+                        uv::Rotor3::from_quaternion_array(rot_q),
+                        scale[0],
+                    ));
+
+                ctx.node_poses[node.index()] = node_pose;
+                if let (Some(mesh), Some(skin)) = (node.mesh(), node.skin()) {
+                    ctx.mesh_skin_idx_map.insert(mesh.index(), skin.index());
+                }
+
+                for child in node.children() {
+                    traverse_node(ctx, child, node_pose);
+                }
+            }
+            traverse_node(
+                &mut TraversalContext {
+                    node_poses: &mut node_poses,
+                    mesh_skin_idx_map: &mut mesh_skin_idx_map,
+                },
+                node,
+                m::Pose::identity(),
+            );
         }
 
         // skins
@@ -253,7 +263,12 @@ impl GraphicsManager {
                     eprintln!("Skin without joints");
                     return td::Index::DANGLING;
                 };
-                let root_transform = node_transforms_world[root_joint.index()];
+                // I believe the root transform should not actually be applied in the skin
+                // and is causing results to be offset wrong,
+                // but I'm not 100% sure of the root cause (no pun intended)
+                // and need a working test case
+                // so I'll leave fixing that to another commit
+                let root_transform = node_poses[root_joint.index()].into_homogeneous_matrix();
                 let loaded_skin = gltf_import::load_skin(&bufs, gltf_skin, root_transform);
                 // evaluate the initial joint matrices in case this skin is used without animation
                 loaded_skin.evaluate_joint_matrices();
@@ -300,35 +315,57 @@ impl GraphicsManager {
 
         // meshes
 
+        let mut loaded_meshes: Vec<td::Index> = vec![td::Index::DANGLING; doc.meshes().count()];
         for gltf_mesh in doc.meshes() {
-            for gltf_prim in gltf_mesh.primitives() {
-                let mesh_data = gltf_import::load_mesh_data(&bufs, gltf_prim.clone());
+            let Some(gltf_prim) = gltf_mesh.primitives().next() else {
+                continue;
+            };
+            let mesh_data = gltf_import::load_mesh_data(&bufs, gltf_prim.clone());
 
-                let mesh = MeshParams {
-                    data: mesh_data,
-                    name: gltf_mesh.name(),
-                    ..Default::default()
-                }
-                .upload();
+            let mesh = MeshParams {
+                data: mesh_data,
+                name: gltf_mesh.name(),
+                ..Default::default()
+            }
+            .upload();
 
-                let mesh_id = self.meshes.insert(mesh);
-                if let Some(name) = gltf_mesh.name() {
-                    self.mesh_name_map.insert(name_to_id(name), mesh_id);
-                }
-                if let Some(mat_idx) = gltf_prim.material().index() {
-                    self.mesh_material_map
-                        .insert_at(mesh_id, loaded_materials[mat_idx]);
-                }
-                if let Some(&skin_idx) = mesh_skin_idx_map.get(&gltf_mesh.index()) {
-                    self.mesh_skin_map
-                        .insert_at(mesh_id, loaded_skins[skin_idx]);
-                    self.skin_mesh_map
-                        .insert_at(loaded_skins[skin_idx], mesh_id);
-                }
+            let mesh_id = self.meshes.insert(mesh);
+            loaded_meshes[gltf_mesh.index()] = mesh_id;
+
+            if let Some(name) = gltf_mesh.name() {
+                self.mesh_name_map.insert(name_to_id(name), mesh_id);
+            }
+            if let Some(mat_idx) = gltf_prim.material().index() {
+                self.mesh_material_map
+                    .insert_at(mesh_id, loaded_materials[mat_idx]);
+            }
+            if let Some(&skin_idx) = mesh_skin_idx_map.get(&gltf_mesh.index()) {
+                self.mesh_skin_map
+                    .insert_at(mesh_id, loaded_skins[skin_idx]);
+                self.skin_mesh_map
+                    .insert_at(loaded_skins[skin_idx], mesh_id);
             }
         }
 
-        Ok(())
+        // scene
+
+        let scene = Scene {
+            nodes: doc
+                .nodes()
+                .map(|node| Node {
+                    pose: node_poses[node.index()],
+                    mesh: node.mesh().map(|m| MeshId {
+                        mesh: loaded_meshes[m.index()],
+                        skin: self.mesh_skin_map.get(loaded_meshes[m.index()]).copied(),
+                    }),
+                })
+                // only include entities that actually have something to spawn
+                // (i.e. not any organizational empty nodes)
+                .filter(|node| node.is_valid_entity())
+                .collect(),
+        };
+
+        Ok(scene)
     }
 
     /// Remove all loaded assets and state.
