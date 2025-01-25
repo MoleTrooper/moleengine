@@ -165,7 +165,6 @@ pub fn load_skin<'doc>(
     let mut joints: Vec<skin::Joint> = gltf_skin
         .joints()
         .map(|joint| skin::Joint {
-            name: joint.name().map(String::from),
             // parents will be computed once we have all joints
             parent_idx: None,
             local_pose: skin::TransformDecomp::from_parts(joint.transform().decomposed()),

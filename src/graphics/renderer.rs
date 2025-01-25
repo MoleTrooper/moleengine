@@ -15,11 +15,6 @@ use wgpu_profiler as wp;
 static DEVICE: OnceLock<wgpu::Device> = OnceLock::new();
 static QUEUE: OnceLock<wgpu::Queue> = OnceLock::new();
 static WINDOW: OnceLock<winit::window::Window> = OnceLock::new();
-// bind group layout in a global for convenience.
-// these are a bit scattered right now with dependencies in many places
-// and the globals are a little ugly,
-// might want to refactor bind group layouts into one place
-static DEPTH_BIND_GROUP_LAYOUT: OnceLock<wgpu::BindGroupLayout> = OnceLock::new();
 
 pub const SWAPCHAIN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
@@ -294,43 +289,6 @@ impl Renderer {
         })
     }
 
-    pub(crate) fn depth_bind_group_layout<'a>() -> &'a wgpu::BindGroupLayout {
-        DEPTH_BIND_GROUP_LAYOUT.get_or_init(|| {
-            let device = Self::device();
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("depth"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Depth,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: true,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
-                        count: None,
-                    },
-                ],
-            })
-        })
-    }
-
     #[inline]
     pub fn swapchain_format(&self) -> wgpu::TextureFormat {
         SWAPCHAIN_FORMAT
@@ -413,7 +371,7 @@ pub struct Frame<'a> {
     clear_color: Option<wgpu::Color>,
 }
 
-impl<'a> Frame<'a> {
+impl Frame<'_> {
     /// Set the color the framebuffer will be cleared with
     /// when the shading is executed. Black by default.
     pub fn set_clear_color(&mut self, color: [f32; 4]) {
@@ -629,7 +587,7 @@ impl<'a> Frame<'a> {
     }
 }
 
-impl<'a> Drop for Frame<'a> {
+impl Drop for Frame<'_> {
     fn drop(&mut self) {
         let queue = Renderer::queue();
         let mut encoder = self.encoder.take().unwrap();

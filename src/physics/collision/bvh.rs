@@ -59,17 +59,18 @@ struct RayStackEntry {
     t: f64,
 }
 impl Eq for RayStackEntry {}
-impl PartialOrd for RayStackEntry {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        other.t.partial_cmp(&self.t)
-    }
-}
+
 impl Ord for RayStackEntry {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         other
             .t
             .partial_cmp(&self.t)
             .expect("Bug in AABB sweep code")
+    }
+}
+impl PartialOrd for RayStackEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -234,6 +235,9 @@ impl Bvh {
     }
 
     // Generate a list of AABBS for debug drawing.
+    /// (currently unused as the old visualizing pipelines don't work anymore
+    /// and I haven't needed them since)
+    #[allow(dead_code)]
     pub(crate) fn all_nodes(&self) -> Vec<NodeInfo> {
         if self.nodes.is_empty() {
             return Vec::new();
@@ -270,6 +274,7 @@ impl Bvh {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) struct NodeInfo {
     pub aabb: AABB,
     pub depth: usize,
@@ -291,7 +296,7 @@ pub struct AABBIter<'a> {
     next_node: Option<usize>,
 }
 
-impl<'a> Iterator for AABBIter<'a> {
+impl Iterator for AABBIter<'_> {
     type Item = ColliderKey;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -330,7 +335,7 @@ impl<'a> Iterator for AABBIter<'a> {
     }
 }
 
-impl<'a> Drop for AABBIter<'a> {
+impl Drop for AABBIter<'_> {
     fn drop(&mut self) {
         // clear the stack on drop; it may not be empty
         // if the iteration didn't finish
@@ -347,7 +352,7 @@ pub struct PointIter<'a> {
     next_node: Option<usize>,
 }
 
-impl<'a> Iterator for PointIter<'a> {
+impl Iterator for PointIter<'_> {
     type Item = ColliderKey;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -385,7 +390,7 @@ impl<'a> Iterator for PointIter<'a> {
     }
 }
 
-impl<'a> Drop for PointIter<'a> {
+impl Drop for PointIter<'_> {
     fn drop(&mut self) {
         self.stack.0.clear();
     }
@@ -410,7 +415,7 @@ pub struct SweepItem {
     pub coll_key: ColliderKey,
 }
 
-impl<'a> Iterator for AABBSweep<'a> {
+impl Iterator for AABBSweep<'_> {
     type Item = SweepItem;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -507,7 +512,7 @@ impl<'a> Iterator for AABBSweep<'a> {
     }
 }
 
-impl<'a> Drop for AABBSweep<'a> {
+impl Drop for AABBSweep<'_> {
     fn drop(&mut self) {
         self.stack.0.clear();
     }

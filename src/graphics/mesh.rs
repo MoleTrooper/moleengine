@@ -41,7 +41,7 @@ pub struct MeshData {
     pub joints: Option<Vec<VertexJoints>>,
 }
 
-impl<'a> MeshParams<'a> {
+impl MeshParams<'_> {
     pub fn upload(self) -> Mesh {
         let device = crate::Renderer::device();
         use wgpu::util::DeviceExt;

@@ -80,9 +80,6 @@ pub struct State {
     egui_renderer: egui_wgpu::Renderer,
     last_egui_output: egui::FullOutput,
     // UI states
-    bvh_vis_active: bool,
-    bvh_vis_levels: usize,
-    island_vis_active: bool,
     spawner_circle_r: f64,
     spawner_obj_count: usize,
     spawner_is_lit: bool,
@@ -124,9 +121,6 @@ impl State {
                 sf::graphics::renderer::MSAA_SAMPLES,
             ),
             last_egui_output: Default::default(),
-            bvh_vis_active: false,
-            bvh_vis_levels: 30,
-            island_vis_active: false,
             spawner_circle_r: 0.0,
             spawner_obj_count: 1,
             spawner_is_lit: true,
@@ -541,15 +535,7 @@ impl sf::GameState for State {
             ui.add(egui::Slider::new(&mut self.time_scale, 0.05..=2.0).text("Time scale"));
 
             ui.separator();
-            ui.heading("Visuals");
-            ui.checkbox(&mut self.bvh_vis_active, "Display BVH");
-            if self.bvh_vis_active {
-                ui.add(
-                    egui::Slider::new(&mut self.bvh_vis_levels, 0..=50).text("Tree levels to show"),
-                );
-            }
-            ui.checkbox(&mut self.island_vis_active, "Display islands");
-            ui.separator();
+
             if ui.button("exit").clicked() {
                 exit = true;
             }

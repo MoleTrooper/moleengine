@@ -37,8 +37,8 @@ pub struct DataView<'a> {
 
 // SAFETY: we only use these inside of the solver
 // where we make sure we don't drop anything before every view is solved
-unsafe impl<'a> Sync for DataView<'a> {}
-unsafe impl<'a> Send for DataView<'a> {}
+unsafe impl Sync for DataView<'_> {}
+unsafe impl Send for DataView<'_> {}
 
 /// Get the index of the body connected to a collider within this island's slice.
 fn get_collider_body(

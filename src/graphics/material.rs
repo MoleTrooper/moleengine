@@ -259,7 +259,7 @@ pub struct TextureData<'a> {
     pub dimensions: (u32, u32),
 }
 
-impl<'a> TextureData<'a> {
+impl TextureData<'_> {
     pub fn upload(self) -> Texture {
         let device = crate::Renderer::device();
         let queue = crate::Renderer::queue();

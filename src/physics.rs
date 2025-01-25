@@ -1217,7 +1217,7 @@ impl PhysicsWorld {
         pose: PhysicsPose,
         shape: ColliderShape,
         mask: CollisionLayerMask,
-    ) -> impl '_ + Iterator<Item = (ColliderKey, Option<BodyKey>)> {
+    ) -> impl 'p + Iterator<Item = (ColliderKey, Option<BodyKey>)> {
         let entity_set = &self.entity_set;
         self.bvh
             .test_aabb(shape.aabb(pose))
@@ -1311,6 +1311,9 @@ impl PhysicsWorld {
     }
 
     /// For debug visualization
+    /// (currently unused as the old visualizing pipelines don't work anymore
+    /// and I haven't needed them since)
+    #[allow(dead_code)]
     pub(crate) fn islands(&self) -> impl '_ + Iterator<Item = impl '_ + Iterator<Item = &'_ Body>> {
         self.working_bufs.islands.iter().map(move |island| {
             (island.body_range_start..island.body_range_start + island.body_count).filter_map(

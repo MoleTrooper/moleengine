@@ -57,7 +57,6 @@ pub(crate) struct JointSet {
 
 #[derive(Debug, Clone)]
 pub struct Joint {
-    pub name: Option<String>,
     /// index of the joint's parent joint in the skin's `joints` array
     pub parent_idx: Option<usize>,
     /// pose relative to the parent joint, updated by animations
